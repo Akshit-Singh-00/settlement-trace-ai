@@ -22,7 +22,7 @@ export interface GatewayRecord {
   merchantId: string;
   merchantName: string;
   amount: number;
-  currency: 'INR';
+  currency: string;
   status: 'captured' | 'failed';
   gatewayReference: string;
   capturedAt: string;
@@ -33,6 +33,8 @@ export interface SettlementRecord {
   settlementId: string;
   transactionId: string;
   amount: number;
+  merchantId?: string;
+  currency?: string;
   status: 'created' | 'processed' | 'failed';
   gatewayReference: string;
   utr?: string;
@@ -45,6 +47,8 @@ export interface BankRecord {
   settlementId: string;
   transactionId: string;
   amount: number;
+  merchantId?: string;
+  currency?: string;
   status: 'pending' | 'credited' | 'failed';
   utr?: string;
   creditedAt?: string;
@@ -55,6 +59,10 @@ export interface LedgerRecord {
   settlementId: string;
   transactionId: string;
   amount: number;
+  merchantId?: string;
+  currency?: string;
+  bankReference?: string;
+  utr?: string;
   status: 'posted' | 'reversed';
   postedAt: string;
 }
@@ -75,6 +83,40 @@ export interface TimelineStage {
   referenceId?: string;
   evidence: string;
   latencyMinutes?: number;
+  anomalies?: string[];
+}
+
+export type ValidationIssueCode =
+  | 'missing_gateway'
+  | 'missing_settlement'
+  | 'missing_bank'
+  | 'missing_ledger'
+  | 'missing_timestamp'
+  | 'transaction_id_mismatch'
+  | 'settlement_id_mismatch'
+  | 'gateway_reference_mismatch'
+  | 'utr_mismatch'
+  | 'merchant_mismatch'
+  | 'amount_mismatch'
+  | 'currency_mismatch'
+  | 'duplicate_records'
+  | 'chronology_mismatch'
+  | 'conflicting_evidence'
+  | 'ambiguous_evidence';
+
+export interface ValidationIssue {
+  code: ValidationIssueCode;
+  message: string;
+  detail: string;
+  stage: PipelineStage;
+  severity: 'low' | 'medium' | 'high';
+  fields?: string[];
+}
+
+export interface ConfidenceFactor {
+  reason: string;
+  deduction: number;
+  stage: PipelineStage;
 }
 
 export interface EvidenceGroup {
@@ -91,6 +133,8 @@ export interface InvestigationResult {
   explanation: string;
   recommendedAction: string;
   exceptions: string[];
+  validationIssues: ValidationIssue[];
+  confidenceBreakdown: ConfidenceFactor[];
   timeline: TimelineStage[];
   evidence: EvidenceGroup[];
   settlementId?: string;

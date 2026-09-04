@@ -2,7 +2,8 @@
 
 import { useMemo } from 'react';
 import { CircleAlert, Database, FileWarning, ShieldCheck } from 'lucide-react';
-import type { EvidenceGroup, PipelineStage } from '@/lib/settlement-types';
+import { AnimatePresence, motion } from 'framer-motion';
+import type { EvidenceGroup, PipelineStage, ValidationIssue } from '@/lib/settlement-types';
 
 const sourceToStage: Record<EvidenceGroup['source'], PipelineStage> = {
   'Payment gateway': 'gateway',
@@ -38,12 +39,12 @@ function displayValue(key: string, value: string | number | undefined) {
 
 export function EvidenceInspector({
   evidence,
-  exceptions,
+  validationIssues,
   selectedStage,
   onStageSelect,
 }: {
   evidence: EvidenceGroup[];
-  exceptions: string[];
+  validationIssues: ValidationIssue[];
   selectedStage: PipelineStage;
   onStageSelect: (stage: PipelineStage) => void;
 }) {
@@ -78,16 +79,17 @@ export function EvidenceInspector({
         ))}
       </div>
 
+      <AnimatePresence mode="wait">
       {group.records.length === 0 ? (
-        <div className="evidence-empty">
+        <motion.div key={`${activeSource}-empty`} className="evidence-empty" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }}>
           <FileWarning size={24} />
           <div>
             <strong>No matching record returned</strong>
             <p>The engine treats this absence as evidence; it never fabricates missing fields.</p>
           </div>
-        </div>
+        </motion.div>
       ) : (
-        <div className="evidence-records">
+        <motion.div key={activeSource} className="evidence-records" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
           {group.records.map((record, recordIndex) => (
             <div className="evidence-record" key={`${group.source}-${recordIndex}`}>
               <div className="record-heading">
@@ -96,9 +98,9 @@ export function EvidenceInspector({
               </div>
               <dl>
                 {Object.entries(record).map(([key, value]) => {
-                  const attention = exceptions.some((exception) =>
-                    `${key} ${exception}`.toLowerCase().match(/amount|reference|utr|multiple|conflict/),
-                  );
+                  const attention = validationIssues.some((issue) => issue.stage === selectedStage && (
+                    issue.fields?.includes(key) || issue.fields?.some((field) => key.toLowerCase().includes(field.toLowerCase()))
+                  ));
                   return (
                     <div key={key} data-attention={attention || undefined}>
                       <dt>{humanize(key)}</dt>
@@ -109,10 +111,11 @@ export function EvidenceInspector({
               </dl>
             </div>
           ))}
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
-      {exceptions.length > 0 && (
+      {validationIssues.length > 0 && (
         <div className="evidence-warning">
           <CircleAlert size={16} /> Review highlighted identifiers against the exception list before acting.
         </div>

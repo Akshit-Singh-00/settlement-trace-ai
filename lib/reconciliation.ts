@@ -1,5 +1,6 @@
 import type {
   BankRecord,
+  ConfidenceFactor,
   EvidenceGroup,
   GatewayRecord,
   InvestigationResult,
@@ -10,29 +11,54 @@ import type {
   SettlementRecord,
   StageStatus,
   TimelineStage,
+  ValidationIssue,
+  ValidationIssueCode,
 } from './settlement-types';
 
 const BANK_SLA_MINUTES = 180;
 const LEDGER_SLA_MINUTES = 30;
 
-function minutesBetween(earlier?: string, later = new Date()): number | undefined {
-  if (!earlier) return undefined;
-  const start = new Date(earlier).getTime();
-  if (Number.isNaN(start)) return undefined;
-  return Math.max(0, Math.round((later.getTime() - start) / 60_000));
+const CONFIDENCE_DEDUCTIONS: Record<ValidationIssueCode, number> = {
+  missing_gateway: 70,
+  missing_settlement: 16,
+  missing_bank: 12,
+  missing_ledger: 14,
+  missing_timestamp: 30,
+  transaction_id_mismatch: 25,
+  settlement_id_mismatch: 28,
+  gateway_reference_mismatch: 22,
+  utr_mismatch: 22,
+  merchant_mismatch: 20,
+  amount_mismatch: 20,
+  currency_mismatch: 24,
+  duplicate_records: 25,
+  chronology_mismatch: 35,
+  conflicting_evidence: 50,
+  ambiguous_evidence: 8,
+};
+
+function timestamp(value?: string) {
+  if (!value) return undefined;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/** Returns a signed duration. Negative values are evidence and must never be clamped. */
+export function minutesBetween(earlier?: string, later?: string | Date): number | undefined {
+  const start = timestamp(earlier);
+  const end = later instanceof Date ? later.getTime() : timestamp(later);
+  if (start === undefined || end === undefined || Number.isNaN(end)) return undefined;
+  return Math.round((end - start) / 60_000);
 }
 
 function formatDuration(minutes?: number) {
   if (minutes === undefined) return 'time unavailable';
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
-}
-
-function recordForEvidence(record: object | undefined) {
-  if (!record) return [];
-  return [record as Record<string, string | number | undefined>];
+  const prefix = minutes < 0 ? '-' : '';
+  const absolute = Math.abs(minutes);
+  if (absolute < 60) return `${prefix}${absolute} min`;
+  const hours = Math.floor(absolute / 60);
+  const remainder = absolute % 60;
+  return remainder ? `${prefix}${hours}h ${remainder}m` : `${prefix}${hours}h`;
 }
 
 function buildEvidence(
@@ -42,56 +68,167 @@ function buildEvidence(
   ledger: LedgerRecord[],
 ): EvidenceGroup[] {
   return [
-    { source: 'Payment gateway', records: recordForEvidence(gateway) },
+    { source: 'Payment gateway', records: gateway ? [gateway as unknown as Record<string, string | number | undefined>] : [] },
     { source: 'Settlement system', records: settlements as unknown as EvidenceGroup['records'] },
     { source: 'Bank', records: bank as unknown as EvidenceGroup['records'] },
     { source: 'Merchant ledger', records: ledger as unknown as EvidenceGroup['records'] },
   ];
 }
 
-function makeStage(
+function issue(
+  code: ValidationIssueCode,
+  message: string,
+  detail: string,
   stage: PipelineStage,
-  label: string,
-  status: StageStatus,
-  source: string,
-  evidence: string,
-  referenceId?: string,
-  timestamp?: string,
-  latencyMinutes?: number,
-): TimelineStage {
-  return { stage, label, status, source, evidence, referenceId, timestamp, latencyMinutes };
+  severity: ValidationIssue['severity'] = 'high',
+  fields?: string[],
+): ValidationIssue {
+  return { code, message, detail, stage, severity, fields };
+}
+
+function uniqueIssues(issues: ValidationIssue[]) {
+  return issues.filter((candidate, index) => issues.findIndex((value) =>
+    value.code === candidate.code && value.stage === candidate.stage && value.detail === candidate.detail) === index);
+}
+
+export function calculateConfidence(issues: ValidationIssue[]) {
+  const seen = new Set<string>();
+  const confidenceBreakdown: ConfidenceFactor[] = [];
+
+  for (const current of issues) {
+    const key = `${current.code}:${current.stage}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    confidenceBreakdown.push({
+      reason: current.message,
+      deduction: CONFIDENCE_DEDUCTIONS[current.code],
+      stage: current.stage,
+    });
+  }
+
+  const confidence = Math.max(5, 99 - confidenceBreakdown.reduce((total, factor) => total + factor.deduction, 0));
+  return { confidence, confidenceBreakdown };
+}
+
+function findRelatedRecords(transactionId: string, gateway: GatewayRecord | undefined, dataset: SettlementDataset) {
+  const settlements = dataset.settlements.filter((record) =>
+    record.transactionId === transactionId || Boolean(gateway && record.gatewayReference === gateway.gatewayReference));
+  const settlementIds = new Set(settlements.map((record) => record.settlementId));
+  const bank = dataset.bank.filter((record) =>
+    record.transactionId === transactionId || settlementIds.has(record.settlementId));
+  const bankReferences = new Set(bank.map((record) => record.bankReference));
+  const utrs = new Set(bank.map((record) => record.utr).filter(Boolean));
+  const ledger = dataset.ledger.filter((record) =>
+    record.transactionId === transactionId || settlementIds.has(record.settlementId)
+      || Boolean(record.bankReference && bankReferences.has(record.bankReference))
+      || Boolean(record.utr && utrs.has(record.utr)));
+  return { settlements, bank, ledger };
+}
+
+function validateChronology(
+  gateway: GatewayRecord,
+  settlement: SettlementRecord | undefined,
+  bank: BankRecord | undefined,
+  ledger: LedgerRecord | undefined,
+) {
+  const issues: ValidationIssue[] = [];
+  const addIfNegative = (
+    earlier: string | undefined,
+    later: string | undefined,
+    stage: PipelineStage,
+    detail: string,
+    fields: string[],
+  ) => {
+    const duration = minutesBetween(earlier, later);
+    if (duration !== undefined && duration < 0) {
+      issues.push(issue('chronology_mismatch', 'Chronology mismatch', `${detail} (${duration} min).`, stage, 'high', fields));
+    }
+  };
+
+  addIfNegative(gateway.capturedAt, settlement?.createdAt, 'settlement', 'Settlement was created before payment capture', ['capturedAt', 'createdAt']);
+  addIfNegative(settlement?.createdAt, settlement?.processedAt, 'settlement', 'Settlement was processed before it was created', ['createdAt', 'processedAt']);
+  addIfNegative(settlement?.processedAt, bank?.creditedAt, 'bank', 'Bank credit occurred before settlement processing', ['processedAt', 'creditedAt']);
+  addIfNegative(bank?.creditedAt, ledger?.postedAt, 'ledger', 'Ledger posting occurred before bank credit', ['creditedAt', 'postedAt']);
+  return issues;
+}
+
+function validateReferences(
+  gateway: GatewayRecord,
+  settlements: SettlementRecord[],
+  bankRecords: BankRecord[],
+  ledgerRecords: LedgerRecord[],
+) {
+  const issues: ValidationIssue[] = [];
+  const settlement = settlements[0];
+  const bank = bankRecords[0];
+  const ledger = ledgerRecords[0];
+
+  if (settlements.length > 1) issues.push(issue('duplicate_records', 'Conflicting settlement records', `${settlements.length} settlement records link to one gateway payment.`, 'settlement'));
+  if (bankRecords.length > 1) issues.push(issue('duplicate_records', 'Multiple bank matches found', `${bankRecords.length} bank records link to one settlement.`, 'bank'));
+  if (ledgerRecords.length > 1) issues.push(issue('duplicate_records', 'Multiple ledger matches found', `${ledgerRecords.length} ledger postings were found for one transaction.`, 'ledger'));
+
+  if (settlement) {
+    if (settlement.transactionId !== gateway.transactionId) issues.push(issue('transaction_id_mismatch', 'Transaction ID mismatch', `Settlement ${settlement.settlementId} points to ${settlement.transactionId}, not ${gateway.transactionId}.`, 'settlement', 'high', ['transactionId']));
+    if (settlement.gatewayReference !== gateway.gatewayReference) issues.push(issue('gateway_reference_mismatch', 'Settlement reference inconsistent', `Settlement gateway reference ${settlement.gatewayReference} does not match ${gateway.gatewayReference}.`, 'settlement', 'high', ['gatewayReference']));
+    if (settlement.amount !== gateway.amount) issues.push(issue('amount_mismatch', 'Amount mismatch detected', `Gateway amount ${gateway.amount} paise does not match settlement amount ${settlement.amount} paise.`, 'settlement', 'high', ['amount']));
+    if (settlement.merchantId && settlement.merchantId !== gateway.merchantId) issues.push(issue('merchant_mismatch', 'Merchant mismatch detected', `Settlement merchant ${settlement.merchantId} does not match gateway merchant ${gateway.merchantId}.`, 'settlement', 'high', ['merchantId']));
+    if (settlement.currency && settlement.currency !== gateway.currency) issues.push(issue('currency_mismatch', 'Currency mismatch detected', `Settlement currency ${settlement.currency} does not match gateway currency ${gateway.currency}.`, 'settlement', 'high', ['currency']));
+  }
+
+  if (bank && settlement) {
+    if (bank.transactionId !== gateway.transactionId) issues.push(issue('transaction_id_mismatch', 'Transaction ID mismatch', `Bank record points to ${bank.transactionId}, not ${gateway.transactionId}.`, 'bank', 'high', ['transactionId']));
+    if (bank.settlementId !== settlement.settlementId) issues.push(issue('settlement_id_mismatch', 'Settlement ID mismatch', `Bank settlement ${bank.settlementId} does not match ${settlement.settlementId}.`, 'bank', 'high', ['settlementId']));
+    if (bank.amount !== settlement.amount) issues.push(issue('amount_mismatch', 'Amount mismatch detected', `Bank amount ${bank.amount} paise does not match settlement amount ${settlement.amount} paise.`, 'bank', 'high', ['amount']));
+    if (bank.merchantId && bank.merchantId !== gateway.merchantId) issues.push(issue('merchant_mismatch', 'Merchant mismatch detected', `Bank merchant ${bank.merchantId} does not match gateway merchant ${gateway.merchantId}.`, 'bank', 'high', ['merchantId']));
+    if (bank.currency && bank.currency !== gateway.currency) issues.push(issue('currency_mismatch', 'Currency mismatch detected', `Bank currency ${bank.currency} does not match gateway currency ${gateway.currency}.`, 'bank', 'high', ['currency']));
+    if (settlement.utr && bank.utr !== settlement.utr) issues.push(issue('utr_mismatch', 'Settlement reference inconsistent', `Bank UTR ${bank.utr ?? 'missing'} does not match settlement UTR ${settlement.utr}.`, 'bank', 'high', ['utr']));
+  }
+
+  if (ledger && settlement) {
+    if (ledger.transactionId !== gateway.transactionId) issues.push(issue('transaction_id_mismatch', 'Transaction ID mismatch', `Ledger record points to ${ledger.transactionId}, not ${gateway.transactionId}.`, 'ledger', 'high', ['transactionId']));
+    if (ledger.settlementId !== settlement.settlementId) issues.push(issue('settlement_id_mismatch', 'Settlement ID mismatch', `Ledger settlement ${ledger.settlementId} does not match ${settlement.settlementId}.`, 'ledger', 'high', ['settlementId']));
+    if (ledger.merchantId && ledger.merchantId !== gateway.merchantId) issues.push(issue('merchant_mismatch', 'Merchant mismatch detected', `Ledger merchant ${ledger.merchantId} does not match gateway merchant ${gateway.merchantId}.`, 'ledger', 'high', ['merchantId']));
+    if (ledger.currency && ledger.currency !== gateway.currency) issues.push(issue('currency_mismatch', 'Currency mismatch detected', `Ledger currency ${ledger.currency} does not match gateway currency ${gateway.currency}.`, 'ledger', 'high', ['currency']));
+    const expectedAmount = bank?.amount ?? settlement.amount;
+    if (ledger.amount !== expectedAmount) issues.push(issue('amount_mismatch', 'Amount mismatch detected', `Ledger amount ${ledger.amount} paise does not match upstream amount ${expectedAmount} paise.`, 'ledger', 'high', ['amount']));
+    if (ledger.bankReference && bank && ledger.bankReference !== bank.bankReference) issues.push(issue('utr_mismatch', 'Bank reference mismatch', `Ledger bank reference ${ledger.bankReference} does not match ${bank.bankReference}.`, 'ledger', 'high', ['bankReference']));
+    if (ledger.utr && bank?.utr && ledger.utr !== bank.utr) issues.push(issue('utr_mismatch', 'Settlement reference inconsistent', `Ledger UTR ${ledger.utr} does not match bank UTR ${bank.utr}.`, 'ledger', 'high', ['utr']));
+  }
+
+  return uniqueIssues(issues);
 }
 
 interface Outcome {
   status: InvestigationStatus;
   stage: PipelineStage;
   rootCause: string;
-  confidence: number;
   recommendedAction: string;
-  exceptions?: string[];
   slaMinutesRemaining?: number;
 }
 
 function explain(outcome: Outcome, context: {
   gateway?: GatewayRecord;
   settlement?: SettlementRecord;
-  bank?: BankRecord;
   ledgerCount: number;
   bankElapsed?: number;
 }) {
   const amount = context.gateway
-    ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(context.gateway.amount / 100)
+    ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: context.gateway.currency, maximumFractionDigits: 0 }).format(context.gateway.amount / 100)
     : 'the payment';
   const settlement = context.settlement?.settlementId;
 
+  if (outcome.rootCause.startsWith('Chronology mismatch')) {
+    return `The source timestamps conflict, so the observed stage order cannot be trusted. ${outcome.rootCause}`;
+  }
   switch (outcome.status) {
     case 'successful':
       return `${amount} was captured, processed in ${settlement}, credited by the bank, and posted once to the merchant ledger. Every reference and amount reconciles.`;
     case 'pending':
       if (outcome.stage === 'settlement') return `Payment capture is confirmed. ${settlement ?? 'The settlement batch'} is still processing inside its expected service window.`;
+      if (outcome.stage === 'ledger') return `Bank credit is confirmed and the merchant ledger is still inside its normal update window.`;
       return `${settlement} was processed ${formatDuration(context.bankElapsed)} ago. Bank credit has not completed, but the transfer remains inside the expected three-hour window.`;
     case 'delayed':
-      if (outcome.stage === 'settlement') return `The gateway captured ${amount}, but no settlement batch was created before the expected cutoff.`;
+      if (outcome.stage === 'settlement') return `The gateway captured ${amount}, but no complete settlement record was available before the expected cutoff.`;
       if (outcome.stage === 'ledger') return `The bank credited ${settlement}, but the merchant ledger has no matching posting after its expected update window.`;
       return `${settlement} was processed, but no confirmed bank credit was found after the expected three-hour window.`;
     case 'failed':
@@ -103,6 +240,20 @@ function explain(outcome: Outcome, context: {
   }
 }
 
+function makeStage(
+  stage: PipelineStage,
+  label: string,
+  status: StageStatus,
+  source: string,
+  evidence: string,
+  referenceId?: string,
+  timestampValue?: string,
+  latencyMinutes?: number,
+  anomalies: string[] = [],
+): TimelineStage {
+  return { stage, label, status, source, evidence, referenceId, timestamp: timestampValue, latencyMinutes, anomalies };
+}
+
 export function reconcileTransaction(
   rawTransactionId: string,
   dataset: SettlementDataset,
@@ -110,126 +261,146 @@ export function reconcileTransaction(
 ): InvestigationResult {
   const transactionId = rawTransactionId.trim().toUpperCase();
   const gateway = dataset.gateway.find((record) => record.transactionId === transactionId);
-  const settlements = dataset.settlements.filter((record) => record.transactionId === transactionId);
-  const bankRecords = dataset.bank.filter((record) => record.transactionId === transactionId);
-  const ledgerRecords = dataset.ledger.filter((record) => record.transactionId === transactionId);
-  const evidence = buildEvidence(gateway, settlements, bankRecords, ledgerRecords);
+  const related = findRelatedRecords(transactionId, gateway, dataset);
+  const evidence = buildEvidence(gateway, related.settlements, related.bank, related.ledger);
 
   if (!gateway) {
+    const validationIssues = [
+      issue('missing_gateway', 'Gateway record unavailable', 'No matching payment gateway evidence was found.', 'gateway'),
+      issue('ambiguous_evidence', 'Unable to establish settlement journey', 'The start of the settlement journey is unknown.', 'gateway', 'medium'),
+    ];
+    const confidence = calculateConfidence(validationIssues);
     const outcome: Outcome = {
-      status: 'uncertain', stage: 'gateway', rootCause: 'No payment gateway record found', confidence: 18,
+      status: 'uncertain', stage: 'gateway', rootCause: 'No payment gateway record found',
       recommendedAction: 'Verify the transaction ID or import the gateway record before escalating.',
-      exceptions: ['Gateway record unavailable', 'Unable to establish the start of the settlement journey'],
     };
     return {
-      transactionId, ...outcome, explanation: explain(outcome, { ledgerCount: ledgerRecords.length }),
-      timeline: [makeStage('gateway', 'Payment captured', 'missing', 'Payment gateway', 'No matching gateway evidence')], evidence,
-      exceptions: outcome.exceptions ?? [],
+      transactionId, ...outcome, ...confidence,
+      explanation: explain(outcome, { ledgerCount: related.ledger.length }),
+      timeline: [makeStage('gateway', 'Payment captured', 'missing', 'Payment gateway', 'No matching gateway evidence', undefined, undefined, undefined, validationIssues.map((value) => value.message))],
+      evidence,
+      exceptions: validationIssues.map((value) => value.message),
+      validationIssues,
     };
   }
 
+  const settlement = related.settlements[0];
+  const bank = related.bank[0];
+  const ledger = related.ledger[0];
   const captureElapsed = minutesBetween(gateway.capturedAt, reference);
-  const expectedSettlementTime = gateway.capturedAt
-    ? new Date(new Date(gateway.capturedAt).getTime() + gateway.expectedSettlementMinutes * 60_000).toISOString()
+  const capturedTimestamp = timestamp(gateway.capturedAt);
+  const expectedSettlementTime = capturedTimestamp !== undefined
+    ? new Date(capturedTimestamp + gateway.expectedSettlementMinutes * 60_000).toISOString()
     : undefined;
-  const settlement = settlements[0];
-  const bank = bankRecords[0];
+  let validationIssues = [
+    ...validateReferences(gateway, related.settlements, related.bank, related.ledger),
+    ...validateChronology(gateway, settlement, bank, ledger),
+  ];
   let outcome: Outcome;
 
-  if (!gateway.capturedAt) {
-    outcome = {
-      status: 'uncertain', stage: 'gateway', rootCause: 'Capture timestamp is missing', confidence: 34,
-      recommendedAction: 'Request the original gateway event before calculating SLA or settlement status.',
-      exceptions: ['Capture timestamp unavailable', 'SLA cannot be calculated'],
-    };
+  const chronology = validationIssues.find((value) => value.code === 'chronology_mismatch');
+  const conflicting = bank?.status === 'failed' && related.ledger.some((record) => record.status === 'posted');
+  if (conflicting) validationIssues.push(issue('conflicting_evidence', 'Conflicting records', 'Bank reports failure while the merchant ledger reports a successful posting.', 'bank'));
+
+  const duplicateSettlement = related.settlements.length > 1;
+  const integrityIssue = validationIssues.find((value) => !['duplicate_records', 'conflicting_evidence', 'chronology_mismatch'].includes(value.code));
+
+  if (!gateway.capturedAt || capturedTimestamp === undefined) {
+    validationIssues.push(issue('missing_timestamp', 'Capture timestamp unavailable', 'SLA and stage ordering cannot be calculated.', 'gateway'));
+    validationIssues.push(issue('ambiguous_evidence', 'SLA cannot be calculated', 'The investigation has no reliable time origin.', 'gateway', 'medium'));
+    outcome = { status: 'uncertain', stage: 'gateway', rootCause: 'Capture timestamp is missing', recommendedAction: 'Request the original gateway event before calculating SLA or settlement status.' };
+  } else if (chronology) {
+    outcome = { status: 'mismatch', stage: chronology.stage, rootCause: `Chronology mismatch: ${chronology.detail}`, recommendedAction: 'Pause automatic resolution and correct the conflicting source timestamps before tracing the transaction.' };
+  } else if (conflicting) {
+    outcome = { status: 'uncertain', stage: 'bank', rootCause: 'Bank reports failure while the ledger reports a successful posting', recommendedAction: 'Freeze automated messaging and request manual bank-ledger reconciliation.' };
+  } else if (duplicateSettlement) {
+    outcome = { status: 'uncertain', stage: 'settlement', rootCause: 'Multiple settlement batches reference one transaction', recommendedAction: 'Pause merchant communication and reconcile duplicate settlement references.' };
+  } else if (integrityIssue) {
+    outcome = { status: 'mismatch', stage: integrityIssue.stage, rootCause: integrityIssue.detail, recommendedAction: 'Block automatic resolution and reconcile the highlighted cross-source fields.' };
   } else if (gateway.status === 'failed') {
-    outcome = { status: 'failed', stage: 'gateway', rootCause: 'Payment capture failed', confidence: 99, recommendedAction: 'Return the gateway failure reason to the merchant; do not trace settlement.' };
-  } else if (settlements.length > 1) {
-    outcome = { status: 'uncertain', stage: 'settlement', rootCause: 'Multiple settlement batches reference one transaction', confidence: 48, recommendedAction: 'Pause merchant communication and reconcile duplicate settlement references.', exceptions: ['Conflicting settlement records'] };
+    outcome = { status: 'failed', stage: 'gateway', rootCause: 'Payment capture failed', recommendedAction: 'Return the gateway failure reason to the merchant; do not trace settlement.' };
   } else if (!settlement) {
-    const overdue = (captureElapsed ?? 0) > gateway.expectedSettlementMinutes;
+    validationIssues.push(issue('missing_settlement', 'Settlement record unavailable', 'Captured payment has no linked settlement record.', 'settlement', captureElapsed !== undefined && captureElapsed > gateway.expectedSettlementMinutes ? 'high' : 'medium'));
+    const overdue = captureElapsed !== undefined && captureElapsed > gateway.expectedSettlementMinutes;
     outcome = overdue
-      ? { status: 'delayed', stage: 'settlement', rootCause: 'Captured payment is missing from a settlement batch', confidence: 96, recommendedAction: 'Escalate to settlement operations with the gateway reference.', exceptions: ['Settlement record unavailable'] }
-      : { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch has not been created yet', confidence: 88, recommendedAction: 'Monitor until the payment reaches its expected settlement cutoff.', slaMinutesRemaining: gateway.expectedSettlementMinutes - (captureElapsed ?? 0) };
-  } else if (settlement.amount !== gateway.amount) {
-    outcome = { status: 'mismatch', stage: 'settlement', rootCause: `Amount mismatch: gateway ${gateway.amount} paise vs settlement ${settlement.amount} paise.`, confidence: 98, recommendedAction: 'Block automatic resolution and ask settlement operations to reconcile the batch total.', exceptions: ['Amount mismatch detected'] };
-  } else if (settlement.gatewayReference !== gateway.gatewayReference) {
-    outcome = { status: 'mismatch', stage: 'settlement', rootCause: 'Gateway reference is inconsistent in the settlement record.', confidence: 97, recommendedAction: 'Verify the settlement mapping before continuing.', exceptions: ['Settlement reference inconsistent'] };
+      ? { status: 'delayed', stage: 'settlement', rootCause: 'Captured payment is missing from a settlement batch', recommendedAction: 'Escalate to settlement operations with the gateway reference.' }
+      : { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch has not been created yet', recommendedAction: 'Monitor until the payment reaches its expected settlement cutoff.', slaMinutesRemaining: Math.max(0, gateway.expectedSettlementMinutes - (captureElapsed ?? 0)) };
   } else if (settlement.status === 'failed') {
-    outcome = { status: 'failed', stage: 'settlement', rootCause: 'Settlement batch failed', confidence: 99, recommendedAction: 'Escalate the failed settlement ID to payment operations and notify the merchant.' };
+    outcome = { status: 'failed', stage: 'settlement', rootCause: 'Settlement batch failed', recommendedAction: 'Escalate the failed settlement ID to payment operations and notify the merchant.' };
   } else if (settlement.status === 'created' || !settlement.processedAt) {
-    const elapsed = minutesBetween(settlement.createdAt, reference) ?? 0;
-    const remaining = Math.max(0, gateway.expectedSettlementMinutes - elapsed);
-    outcome = elapsed <= gateway.expectedSettlementMinutes
-      ? { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch is still processing', confidence: 94, recommendedAction: 'Continue monitoring; no escalation is needed inside the processing window.', slaMinutesRemaining: remaining }
-      : { status: 'delayed', stage: 'settlement', rootCause: 'Settlement processing exceeded its service window', confidence: 96, recommendedAction: 'Escalate the delayed batch to settlement operations.' };
+    if (settlement.status === 'processed' && !settlement.processedAt) validationIssues.push(issue('missing_timestamp', 'Settlement processing timestamp unavailable', 'The settlement is marked processed without a processedAt value.', 'settlement'));
+    const elapsed = minutesBetween(settlement.createdAt, reference);
+    const remaining = Math.max(0, gateway.expectedSettlementMinutes - (elapsed ?? gateway.expectedSettlementMinutes));
+    outcome = elapsed !== undefined && elapsed <= gateway.expectedSettlementMinutes
+      ? { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch is still processing', recommendedAction: 'Continue monitoring; no escalation is needed inside the processing window.', slaMinutesRemaining: remaining }
+      : { status: 'delayed', stage: 'settlement', rootCause: 'Settlement processing exceeded its service window', recommendedAction: 'Escalate the delayed batch to settlement operations.' };
   } else if (!bank) {
-    const elapsed = minutesBetween(settlement.processedAt, reference) ?? 0;
-    outcome = elapsed <= BANK_SLA_MINUTES
-      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is awaiting confirmation', confidence: 90, recommendedAction: 'Monitor until the three-hour bank window expires.', slaMinutesRemaining: BANK_SLA_MINUTES - elapsed }
-      : { status: 'delayed', stage: 'bank', rootCause: 'No bank credit found after the expected window', confidence: 95, recommendedAction: 'Escalate with the settlement ID and UTR.', exceptions: ['Bank record unavailable'] };
-  } else if (bank.amount !== settlement.amount) {
-    outcome = { status: 'mismatch', stage: 'bank', rootCause: `Bank amount ${bank.amount} paise does not match settlement amount ${settlement.amount} paise.`, confidence: 98, recommendedAction: 'Hold resolution and reconcile the bank credit amount.', exceptions: ['Amount mismatch detected'] };
-  } else if (settlement.utr && bank.utr !== settlement.utr) {
-    outcome = { status: 'mismatch', stage: 'bank', rootCause: 'Bank UTR does not match the processed settlement UTR.', confidence: 98, recommendedAction: 'Trace both UTR references with the banking partner.', exceptions: ['Settlement reference inconsistent'] };
+    validationIssues.push(issue('missing_bank', 'Bank record unavailable', 'Processed settlement has no linked bank record.', 'bank', 'medium'));
+    const elapsed = minutesBetween(settlement.processedAt, reference);
+    outcome = elapsed !== undefined && elapsed <= BANK_SLA_MINUTES
+      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is awaiting confirmation', recommendedAction: 'Monitor until the three-hour bank window expires.', slaMinutesRemaining: BANK_SLA_MINUTES - elapsed }
+      : { status: 'delayed', stage: 'bank', rootCause: 'No bank credit found after the expected window', recommendedAction: 'Escalate with the settlement ID and UTR.' };
   } else if (bank.status === 'failed') {
-    if (ledgerRecords.some((record) => record.status === 'posted')) {
-      outcome = { status: 'uncertain', stage: 'bank', rootCause: 'Bank reports failure while the ledger reports a successful posting', confidence: 42, recommendedAction: 'Freeze automated messaging and request manual bank-ledger reconciliation.', exceptions: ['Conflicting records', 'Unable to determine settlement stage confidently'] };
-    } else {
-      outcome = { status: 'failed', stage: 'bank', rootCause: 'Bank transfer failed', confidence: 99, recommendedAction: 'Escalate the failed transfer using the bank reference and settlement UTR.' };
-    }
+    outcome = { status: 'failed', stage: 'bank', rootCause: 'Bank transfer failed', recommendedAction: 'Escalate the failed transfer using the bank reference and settlement UTR.' };
   } else if (bank.status === 'pending') {
-    const elapsed = minutesBetween(settlement.processedAt, reference) ?? 0;
-    outcome = elapsed <= BANK_SLA_MINUTES
-      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is pending inside SLA', confidence: 95, recommendedAction: 'Continue monitoring until the bank SLA expires.', slaMinutesRemaining: BANK_SLA_MINUTES - elapsed }
-      : { status: 'delayed', stage: 'bank', rootCause: 'Bank credit exceeded the expected window', confidence: 97, recommendedAction: 'Escalate to the banking partner with the UTR.' };
-  } else if (ledgerRecords.length === 0) {
-    const elapsed = minutesBetween(bank.creditedAt, reference) ?? 0;
-    outcome = elapsed <= LEDGER_SLA_MINUTES
-      ? { status: 'pending', stage: 'ledger', rootCause: 'Ledger posting is still inside its update window', confidence: 90, recommendedAction: 'Wait for the ledger synchronization window to close.', slaMinutesRemaining: LEDGER_SLA_MINUTES - elapsed }
-      : { status: 'delayed', stage: 'ledger', rootCause: 'Bank credit has no matching merchant ledger entry', confidence: 97, recommendedAction: 'Escalate to merchant ledger operations with the bank reference.', exceptions: ['Merchant ledger record unavailable'] };
-  } else if (ledgerRecords.length > 1) {
-    outcome = { status: 'mismatch', stage: 'ledger', rootCause: `${ledgerRecords.length} ledger postings were found for one transaction.`, confidence: 99, recommendedAction: 'Flag the duplicate entries and begin ledger reversal review.', exceptions: ['Multiple ledger matches found'] };
-  } else if (ledgerRecords[0].amount !== bank.amount) {
-    outcome = { status: 'mismatch', stage: 'ledger', rootCause: 'Ledger amount does not match the credited bank amount.', confidence: 98, recommendedAction: 'Reconcile the ledger posting before closing the case.', exceptions: ['Amount mismatch detected'] };
+    const elapsed = minutesBetween(settlement.processedAt, reference);
+    outcome = elapsed !== undefined && elapsed <= BANK_SLA_MINUTES
+      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is pending inside SLA', recommendedAction: 'Continue monitoring until the bank SLA expires.', slaMinutesRemaining: BANK_SLA_MINUTES - elapsed }
+      : { status: 'delayed', stage: 'bank', rootCause: 'Bank credit exceeded the expected window', recommendedAction: 'Escalate to the banking partner with the UTR.' };
+  } else if (!bank.creditedAt || timestamp(bank.creditedAt) === undefined) {
+    validationIssues.push(issue('missing_timestamp', 'Bank credit timestamp unavailable', 'The bank is marked credited without a valid creditedAt value.', 'bank'));
+    outcome = { status: 'uncertain', stage: 'bank', rootCause: 'Bank credit timestamp is missing', recommendedAction: 'Request the bank confirmation timestamp before closing the case.' };
+  } else if (related.ledger.length === 0) {
+    validationIssues.push(issue('missing_ledger', 'Merchant ledger record unavailable', 'Bank credit has no linked merchant ledger entry.', 'ledger', 'medium'));
+    const elapsed = minutesBetween(bank.creditedAt, reference);
+    outcome = elapsed !== undefined && elapsed <= LEDGER_SLA_MINUTES
+      ? { status: 'pending', stage: 'ledger', rootCause: 'Ledger posting is still inside its update window', recommendedAction: 'Wait for the ledger synchronization window to close.', slaMinutesRemaining: LEDGER_SLA_MINUTES - elapsed }
+      : { status: 'delayed', stage: 'ledger', rootCause: 'Bank credit has no matching merchant ledger entry', recommendedAction: 'Escalate to merchant ledger operations with the bank reference.' };
+  } else if (related.ledger.length > 1) {
+    outcome = { status: 'mismatch', stage: 'ledger', rootCause: `${related.ledger.length} ledger postings were found for one transaction.`, recommendedAction: 'Flag the duplicate entries and begin ledger reversal review.' };
+  } else if (!ledger.postedAt || timestamp(ledger.postedAt) === undefined) {
+    validationIssues.push(issue('missing_timestamp', 'Ledger posting timestamp unavailable', 'The ledger record does not contain a valid postedAt value.', 'ledger'));
+    outcome = { status: 'uncertain', stage: 'ledger', rootCause: 'Ledger posting timestamp is missing', recommendedAction: 'Request the ledger event timestamp before closing the case.' };
   } else {
-    outcome = { status: 'successful', stage: 'ledger', rootCause: 'All settlement stages reconciled', confidence: 99, recommendedAction: 'Close the case and share the bank and ledger references with the merchant.' };
+    outcome = { status: 'successful', stage: 'ledger', rootCause: 'All settlement stages reconciled', recommendedAction: 'Close the case and share the bank and ledger references with the merchant.' };
   }
 
+  validationIssues = uniqueIssues(validationIssues);
+  const confidence = calculateConfidence(validationIssues);
+  const issueMessages = [...new Set(validationIssues.map((value) => value.message))];
+  const anomaliesFor = (stage: PipelineStage) => validationIssues.filter((value) => value.stage === stage).map((value) => value.message);
+  const outcomeStageStatus: StageStatus = outcome.status === 'failed' ? 'failed'
+    : outcome.status === 'delayed' ? 'delayed'
+      : outcome.status === 'pending' ? 'current'
+        : outcome.status === 'successful' ? 'complete' : 'mismatch';
+
+  let gatewayStatus: StageStatus = gateway.status === 'captured' ? 'complete' : 'failed';
+  let settlementCreatedStatus: StageStatus = settlement ? 'complete' : outcome.stage === 'settlement' ? 'missing' : 'pending';
+  let settlementProcessedStatus: StageStatus = !settlement ? 'pending' : settlement.status === 'failed' ? 'failed' : settlement.processedAt ? 'complete' : outcome.stage === 'settlement' ? outcomeStageStatus : 'pending';
+  let bankStatus: StageStatus = !bank ? outcome.stage === 'bank' ? (outcome.status === 'pending' ? 'current' : 'missing') : 'pending' : bank.status === 'failed' ? 'failed' : bank.status === 'pending' ? 'current' : 'complete';
+  let ledgerStatus: StageStatus = !ledger ? outcome.stage === 'ledger' ? (outcome.status === 'pending' ? 'current' : 'missing') : 'pending' : related.ledger.length > 1 ? 'mismatch' : 'complete';
+  if (outcome.stage === 'gateway') gatewayStatus = outcomeStageStatus;
+  if (outcome.stage === 'settlement') settlementProcessedStatus = outcomeStageStatus;
+  if (outcome.stage === 'bank') bankStatus = outcomeStageStatus;
+  if (outcome.stage === 'ledger') ledgerStatus = outcomeStageStatus;
+  if (anomaliesFor('settlement').length && settlement) settlementCreatedStatus = 'mismatch';
+
   const bankElapsed = minutesBetween(settlement?.processedAt, reference);
-  const outcomeStageStatus = ({
-    successful: 'complete',
-    failed: 'failed',
-    mismatch: 'mismatch',
-    delayed: 'delayed',
-    pending: 'current',
-    uncertain: 'mismatch',
-  } satisfies Record<InvestigationStatus, StageStatus>)[outcome.status];
-  const settlementCreatedStatus: StageStatus = !settlement
-    ? outcome.stage === 'settlement' ? 'missing' : 'pending'
-    : outcome.stage === 'settlement' && (settlements.length > 1 || outcome.status === 'mismatch')
-      ? 'mismatch'
-      : 'complete';
-  const settlementProcessedStatus: StageStatus = !settlement
-    ? 'pending'
-    : settlement.status === 'failed'
-      ? 'failed'
-      : !settlement.processedAt
-        ? outcome.stage === 'settlement' ? outcomeStageStatus : 'pending'
-        : outcome.stage === 'settlement' ? outcomeStageStatus : 'complete';
   const timeline: TimelineStage[] = [
-    makeStage('gateway', 'Payment captured', gateway.status === 'captured' ? 'complete' : 'failed', 'Payment gateway', `${gateway.status} · ${gateway.amount} paise`, gateway.gatewayReference, gateway.capturedAt, 0),
-    makeStage('settlement', 'Settlement batch created', settlementCreatedStatus, 'Settlement system', settlement ? `${settlement.status} · ${settlement.amount} paise` : 'No matching batch', settlement?.settlementId, settlement?.createdAt, settlement ? minutesBetween(gateway.capturedAt, new Date(settlement.createdAt)) : undefined),
-    makeStage('settlement', 'Settlement processed', settlementProcessedStatus, 'Settlement system', settlement?.processedAt ? `Processed · ${settlement.utr ?? 'UTR unavailable'}` : settlement ? 'Awaiting processor confirmation' : 'Blocked until a batch exists', settlement?.utr ?? settlement?.settlementId, settlement?.processedAt, settlement?.processedAt ? minutesBetween(settlement.createdAt, new Date(settlement.processedAt)) : undefined),
-    makeStage('bank', 'Bank credit', !bank ? (outcome.stage === 'bank' ? (outcome.status === 'pending' ? 'current' : 'missing') : 'pending') : outcome.stage === 'bank' ? ({ successful: 'complete', failed: 'failed', mismatch: 'mismatch', delayed: 'delayed', pending: 'current', uncertain: 'mismatch' }[outcome.status] as StageStatus) : 'complete', 'Bank settlement system', bank ? `${bank.status} · ${bank.amount} paise` : 'No bank record', bank?.bankReference, bank?.creditedAt, bankElapsed),
-    makeStage('ledger', 'Merchant ledger posting', ledgerRecords.length === 0 ? (outcome.stage === 'ledger' ? 'missing' : 'pending') : outcome.stage === 'ledger' ? (outcome.status === 'successful' ? 'complete' : outcome.status === 'mismatch' ? 'mismatch' : outcome.status === 'delayed' ? 'delayed' : 'current') : 'complete', 'Merchant ledger', ledgerRecords.length ? `${ledgerRecords.length} matching record${ledgerRecords.length > 1 ? 's' : ''}` : 'No ledger posting', ledgerRecords[0]?.ledgerReference, ledgerRecords[0]?.postedAt, minutesBetween(bank?.creditedAt, ledgerRecords[0]?.postedAt ? new Date(ledgerRecords[0].postedAt) : reference)),
+    makeStage('gateway', 'Payment captured', gatewayStatus, 'Payment gateway', `${gateway.status} · ${gateway.amount} paise`, gateway.gatewayReference, gateway.capturedAt, 0, anomaliesFor('gateway')),
+    makeStage('settlement', 'Settlement batch created', settlementCreatedStatus, 'Settlement system', settlement ? `${settlement.status} · ${settlement.amount} paise` : 'No matching batch', settlement?.settlementId, settlement?.createdAt, settlement ? minutesBetween(gateway.capturedAt, settlement.createdAt) : undefined, anomaliesFor('settlement')),
+    makeStage('settlement', 'Settlement processed', settlementProcessedStatus, 'Settlement system', settlement?.processedAt ? `Processed · ${settlement.utr ?? 'UTR unavailable'}` : settlement ? 'Awaiting processor confirmation' : 'Blocked until a batch exists', settlement?.utr ?? settlement?.settlementId, settlement?.processedAt, minutesBetween(settlement?.createdAt, settlement?.processedAt), anomaliesFor('settlement')),
+    makeStage('bank', 'Bank credit', bankStatus, 'Bank settlement system', bank ? `${bank.status} · ${bank.amount} paise` : 'No bank record', bank?.bankReference, bank?.creditedAt, minutesBetween(settlement?.processedAt, bank?.creditedAt), anomaliesFor('bank')),
+    makeStage('ledger', 'Merchant ledger posting', ledgerStatus, 'Merchant ledger', related.ledger.length ? `${related.ledger.length} matching record${related.ledger.length > 1 ? 's' : ''}` : 'No ledger posting', ledger?.ledgerReference, ledger?.postedAt, minutesBetween(bank?.creditedAt, ledger?.postedAt), anomaliesFor('ledger')),
   ];
 
   return {
     transactionId,
     ...outcome,
-    explanation: explain(outcome, { gateway, settlement, bank, ledgerCount: ledgerRecords.length, bankElapsed }),
-    exceptions: outcome.exceptions ?? [],
+    ...confidence,
+    explanation: explain(outcome, { gateway, settlement, ledgerCount: related.ledger.length, bankElapsed }),
+    exceptions: issueMessages,
+    validationIssues,
     timeline,
     evidence,
     settlementId: settlement?.settlementId,
@@ -242,5 +413,5 @@ export function reconcileTransaction(
 }
 
 export function extractTransactionId(input: string) {
-  return input.toUpperCase().match(/TXN-\d{4,}/)?.[0] ?? input.trim().toUpperCase();
+  return input.toUpperCase().match(/TXN-[A-Z0-9-]{3,}/)?.[0] ?? input.trim().toUpperCase();
 }

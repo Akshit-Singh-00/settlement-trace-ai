@@ -100,3 +100,89 @@ describe('extractTransactionId', () => {
     expect(extractTransactionId('Has txn-1090 reached the bank?')).toBe('TXN-1090');
   });
 });
+
+describe('evidence integrity validation', () => {
+  it('surfaces impossible chronology and preserves the negative duration', () => {
+    const conflicting = structuredClone(dataset);
+    const settlement = conflicting.settlements.find((record) => record.transactionId === 'TXN-1001')!;
+    settlement.createdAt = new Date('2026-09-03T05:00:00.000Z').toISOString();
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+
+    expect(result.status).toBe('mismatch');
+    expect(result.rootCause).toContain('Chronology mismatch');
+    expect(result.exceptions).toContain('Chronology mismatch');
+    expect(result.timeline[1].latencyMinutes).toBeLessThan(0);
+    expect(result.timeline[1].anomalies).toContain('Chronology mismatch');
+    expect(result.confidence).toBeLessThan(99);
+  });
+
+  it.each([
+    ['settlement processing before creation', (data: typeof dataset) => {
+      const settlement = data.settlements.find((record) => record.transactionId === 'TXN-1001')!;
+      settlement.processedAt = '2026-09-03T06:40:00.000Z';
+    }, 'settlement', 2],
+    ['bank credit before settlement processing', (data: typeof dataset) => {
+      data.bank.find((record) => record.transactionId === 'TXN-1001')!.creditedAt = '2026-09-03T07:55:00.000Z';
+    }, 'bank', 3],
+    ['ledger posting before bank credit', (data: typeof dataset) => {
+      data.ledger.find((record) => record.transactionId === 'TXN-1001')!.postedAt = '2026-09-03T09:00:00.000Z';
+    }, 'ledger', 4],
+  ] as const)('detects %s', (_label, mutate, expectedStage, timelineIndex) => {
+    const conflicting = structuredClone(dataset);
+    mutate(conflicting);
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+    expect(result.status).toBe('mismatch');
+    expect(result.stage).toBe(expectedStage);
+    expect(result.validationIssues.some((item) => item.code === 'chronology_mismatch')).toBe(true);
+    expect(result.timeline[timelineIndex].latencyMinutes).toBeLessThan(0);
+  });
+
+  it('detects a settlement ID mismatch across bank and settlement records', () => {
+    const conflicting = structuredClone(dataset);
+    conflicting.bank.find((record) => record.transactionId === 'TXN-1001')!.settlementId = 'SET-WRONG';
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+    expect(result.status).toBe('mismatch');
+    expect(result.exceptions).toContain('Settlement ID mismatch');
+  });
+
+  it('detects a merchant mismatch', () => {
+    const conflicting = structuredClone(dataset);
+    conflicting.settlements.find((record) => record.transactionId === 'TXN-1001')!.merchantId = 'MRC-WRONG';
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+    expect(result.status).toBe('mismatch');
+    expect(result.exceptions).toContain('Merchant mismatch detected');
+  });
+
+  it('detects a currency mismatch', () => {
+    const conflicting = structuredClone(dataset);
+    conflicting.bank.find((record) => record.transactionId === 'TXN-1001')!.currency = 'USD';
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+    expect(result.status).toBe('mismatch');
+    expect(result.exceptions).toContain('Currency mismatch detected');
+  });
+
+  it('detects a gateway reference mismatch', () => {
+    const conflicting = structuredClone(dataset);
+    const settlement = conflicting.settlements.find((record) => record.transactionId === 'TXN-1001')!;
+    settlement.gatewayReference = 'GTW-WRONG';
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+    expect(result.status).toBe('mismatch');
+    expect(result.exceptions).toContain('Settlement reference inconsistent');
+  });
+
+  it('reduces confidence with explainable deterministic deductions', () => {
+    const result = trace('TXN-1080');
+    expect(result.confidence).toBe(79);
+    expect(result.confidenceBreakdown).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: 'Amount mismatch detected', deduction: 20 }),
+    ]));
+  });
+
+  it('links and flags a settlement whose transaction ID conflicts with the gateway reference', () => {
+    const conflicting = structuredClone(dataset);
+    conflicting.settlements.find((record) => record.transactionId === 'TXN-1001')!.transactionId = 'TXN-WRONG';
+    const result = reconcileTransaction('TXN-1001', conflicting, reference);
+    expect(result.status).toBe('mismatch');
+    expect(result.exceptions).toContain('Transaction ID mismatch');
+  });
+});

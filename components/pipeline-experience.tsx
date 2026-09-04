@@ -1,6 +1,7 @@
 'use client';
 
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { useTheme } from '@/components/theme-provider';
 import type { PipelineStage, StageStatus, TimelineStage } from '@/lib/settlement-types';
 
 const PipelineScene = lazy(() => import('@/components/pipeline-scene'));
@@ -53,12 +54,15 @@ export function PipelineExperience({
   timeline,
   selectedStage,
   onStageSelect,
+  transactionId,
 }: {
   timeline: TimelineStage[];
   selectedStage: PipelineStage;
   onStageSelect: (stage: PipelineStage) => void;
+  transactionId: string;
 }) {
   const [supports3d, setSupports3d] = useState(false);
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -79,7 +83,7 @@ export function PipelineExperience({
 
   return (
     <Suspense fallback={<PipelineFallback timeline={timeline} selectedStage={selectedStage} onStageSelect={onStageSelect} />}>
-      <PipelineScene timeline={timeline} selectedStage={selectedStage} onStageSelect={onStageSelect} />
+      <PipelineScene timeline={timeline} selectedStage={selectedStage} onStageSelect={onStageSelect} theme={resolvedTheme} transactionId={transactionId} />
     </Suspense>
   );
 }
