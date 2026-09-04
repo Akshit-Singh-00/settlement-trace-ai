@@ -22,6 +22,9 @@
 *.pem
 *.tsbuildinfo
 .cache/
+.deck-build/
+.deck-output/
+.codex-finalizer/
 
 # debug
 npm-debug.log*

@@ -121,6 +121,12 @@ examples/                    Sample synthetic CSV inputs
 types/webmcp.d.ts            Progressive WebMCP browser typing
 ```
 
+## Live demo
+
+The validated production release is available at [Settlement Trace AI](https://settlement-trace-ai.nikhilgurnani0524.chatgpt.site).
+
+The repository is also ready for Vercel. After authenticating the Vercel CLI, deploy from the project root with `vercel --prod`.
+
 ## Screenshots and demo flow
 
 For a 90-second judge walkthrough:
@@ -131,7 +137,7 @@ For a 90-second judge walkthrough:
 4. Switch through the timeline and evidence tabs, then download the JSON report.
 5. Finish on Operations to show portfolio-level prioritisation.
 
-The live URL is added here once the deployment is published.
+The concise six-slide pitch is available at [deliverables/Settlement_Trace_AI_Hackathon_Pitch.pptx](deliverables/Settlement_Trace_AI_Hackathon_Pitch.pptx).
 
 ## Originality and responsible use
 
