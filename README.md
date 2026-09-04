@@ -1,6 +1,8 @@
 # Settlement Trace AI
 
-🚀 **Live Demo:** [Open Settlement Trace AI](https://settlement-trace-ai.nikhilgurnani0524.chatgpt.site)
+🚀 **Live Demo:** [Open Settlement Trace AI](https://settlement-trace-ai.vercel.app)
+
+**Alternate demo:** [OpenAI Sites](https://settlement-trace-ai.nikhilgurnani0524.chatgpt.site)
 
 > Simulated dataset — not live financial data.
 
@@ -147,20 +149,23 @@ pnpm test
 pnpm typecheck
 pnpm lint
 pnpm build
+pnpm build:vercel
 pnpm test:e2e
 ```
 
 The Vitest suite covers original scenarios plus chronology conflicts, reference/merchant/currency mismatches, missing and contradictory evidence, confidence deductions, date/filter parsing, CSV recovery, and deterministic AI fallback. The Playwright suite uses behavior assertions—not screenshot-only checks—for successful/delayed/uncertain investigation, synchronized evidence selection, theme persistence, date drill-down, valid and invalid CSVs, unknown IDs, and no-key fallback.
 
-GitHub Actions runs install, unit tests, typecheck, lint, production build, and Chromium E2E tests on every pull request and push to `main`.
+GitHub Actions runs install, unit tests, typecheck, lint, both production builds, and Chromium E2E tests on every pull request and push to `main`.
 
 ## Deployment
 
 The live demo is publicly accessible without a ChatGPT or OpenAI login. The homepage and explanation endpoint have been checked from a fresh browser context without saved cookies. Views use URL fragments on `/`, so refreshing `/#investigation`, `/#dashboard`, or `/#reports` does not require a separate server route.
 
-The single supported deployment path is the existing Vinext → Cloudflare Worker pipeline managed by OpenAI Sites. `vite.config.ts` includes both the Cloudflare and Sites plugins, and `.openai/hosting.json` holds the Sites project association.
+The existing OpenAI Sites deployment uses the Vinext → Cloudflare Worker pipeline in `vite.config.ts`. `.openai/hosting.json` holds its project association.
 
-Before publishing, run all validation commands above. Environment secrets such as `GEMINI_API_KEY` must be configured in the deployment environment; never commit them. This repository intentionally does not include Vercel instructions because that target is not part of the verified build path.
+Vercel uses the separate `vite.vercel.config.ts` configuration with the Nitro adapter. `vercel.json` supplies the install command and `pnpm build:vercel`; Nitro generates Vercel's Build Output API files in `.vercel/output`. Import this GitHub repository into a Vercel Hobby project to deploy the pages and `/api/explain` endpoint together.
+
+Set `GEMINI_API_KEY` as a sensitive production environment variable and set `GEMINI_MODEL=gemini-3.5-flash-lite`. Keep the key server-only: do not prefix it with `VITE_` or `NEXT_PUBLIC_`. Without a key, investigations continue to use their deterministic explanations. Before publishing, run all validation commands above and verify the production domain in a fresh browser session.
 
 ## Project map
 
