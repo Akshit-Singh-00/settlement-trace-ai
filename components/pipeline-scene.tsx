@@ -14,10 +14,10 @@ const pipelineStages: Array<{ id: PipelineStage; label: string; short: string }>
 ];
 
 const positions: [number, number, number][] = [
-  [-3.75, 0.35, 0],
-  [-1.25, -0.35, 0.2],
-  [1.25, 0.42, -0.1],
-  [3.75, -0.15, 0.15],
+  [-3.18, 0.35, 0],
+  [-1.06, -0.35, 0.2],
+  [1.06, 0.42, -0.1],
+  [3.18, -0.15, 0.15],
 ];
 
 const statusColors: Record<StageStatus, string> = {

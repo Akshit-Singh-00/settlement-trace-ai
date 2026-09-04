@@ -16,7 +16,10 @@ import {
   Layers3,
   ListFilter,
   LoaderCircle,
+  Menu,
+  Network,
   Printer,
+  Route,
   Search,
   ShieldCheck,
   Sparkles,
@@ -49,10 +52,13 @@ const statusCopy: Record<InvestigationStatus, string> = {
 
 const suggestions = [
   'Why is TXN-1048 pending?',
-  'Which settlements failed on September 3?',
+  'Which settlements failed on September 3 2026?',
   'Show delayed transactions',
   'Which transactions have settlement mismatches?',
 ];
+
+const heroDemoIds = ['TXN-1055', 'TXN-1001', 'TXN-1080'] as const;
+const landingDemoIds = ['TXN-1001', 'TXN-1055', 'TXN-1071', 'TXN-1080', 'TXN-1090', 'TXN-1097'] as const;
 
 const reveal = {
   hidden: { opacity: 0, y: 14 },
@@ -84,6 +90,21 @@ function TraceLoading() {
         <i key={label} style={{ '--trace-delay': `${index * 55}ms` } as React.CSSProperties}><b />{label}</i>
       ))}</div>
     </motion.output>
+  );
+}
+
+function SectionReveal({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <motion.div
+      className={className}
+      initial={reducedMotion ? false : { opacity: 0, y: 24 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-10% 0px' }}
+      transition={{ duration: reducedMotion ? 0.01 : 0.42, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -140,10 +161,29 @@ export function InvestigationShell({ referenceTime }: { referenceTime: string })
   const [explanation, setExplanation] = useState<ExplanationResponse>(() => ({ source: 'deterministic', explanation: deterministicExplanation(result), fallbackReason: 'not-configured' }));
   const [explanationLoading, setExplanationLoading] = useState(true);
   const [reportReady, setReportReady] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [heroDemo, setHeroDemo] = useState<{ index: number; stage: PipelineStage }>({ index: 0, stage: 'bank' });
   const reducedMotion = useReducedMotion();
   const visualX = useSpring(useMotionValue(0), { stiffness: 120, damping: 22 });
   const visualY = useSpring(useMotionValue(0), { stiffness: 120, damping: 22 });
   const searchRef = useRef<HTMLDivElement>(null);
+  const heroResult = useMemo(
+    () => reconcileTransaction(heroDemoIds[heroDemo.index], initialDataset, referenceDate),
+    [heroDemo.index, initialDataset, referenceDate],
+  );
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setHeroDemo((current) => {
+        const index = (current.index + 1) % heroDemoIds.length;
+        const nextResult = reconcileTransaction(heroDemoIds[index], initialDataset, referenceDate);
+        return { index, stage: nextResult.stage };
+      });
+    }, 5600);
+    return () => window.clearInterval(interval);
+  }, [initialDataset, reducedMotion, referenceDate]);
 
   const visibleSuggestions = useMemo(() => {
     const needle = query.toLowerCase();
@@ -281,36 +321,31 @@ export function InvestigationShell({ referenceTime }: { referenceTime: string })
       <div className="ambient-grid" aria-hidden="true" />
       <header className="site-header">
         <a href="#top" className="brand" aria-label="Settlement Trace AI home"><span className="brand-mark"><Sparkles size={18} /></span><span>Settlement Trace <b>AI</b></span></a>
-        <nav aria-label="Primary navigation"><a href="#investigation">Investigate</a><a href="#demo-cases">Demo cases</a><a href="#operations">Operations</a><a href="#data-lab">Data lab</a></nav>
-        <div className="header-tools"><div className="header-meta"><span className="live-dot" /> Engine online</div><ThemeToggle /></div>
+        <button className="mobile-menu-button" type="button" aria-expanded={mobileNavOpen} aria-controls="primary-navigation" aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'} onClick={() => setMobileNavOpen((open) => !open)}>{mobileNavOpen ? <X size={19} /> : <Menu size={19} />}</button>
+        <nav id="primary-navigation" className={mobileNavOpen ? 'open' : ''} aria-label="Primary navigation">
+          <a href="#product" onClick={() => setMobileNavOpen(false)}>Product</a>
+          <a href="#how-it-works" onClick={() => setMobileNavOpen(false)}>How it works</a>
+          <a href="#demo-cases" onClick={() => setMobileNavOpen(false)}>Demo cases</a>
+          <a href="#investigation" onClick={() => setMobileNavOpen(false)}>Investigation</a>
+          <a href="https://github.com/Akshit-Singh-00/settlement-trace-ai" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+        </nav>
+        <div className="header-tools"><div className="header-meta"><span className="live-dot" /> Engine online</div><ThemeToggle /><a className="header-cta" href="#investigation">Investigate</a></div>
       </header>
 
-      <section id="top" className="hero-shell">
+      <section id="top" className="hero-shell" aria-labelledby="hero-title">
         <motion.div className="hero-copy" initial="hidden" animate="visible" variants={{ visible: { transition: { delayChildren: reducedMotion ? 0 : stagger(0.075) } } }}>
-          <motion.div variants={reveal} className="eyebrow"><ShieldCheck size={15} /> Evidence-grounded settlement intelligence</motion.div>
-          <motion.h1 variants={reveal}>Follow the money.<br /><span>Find the break.</span></motion.h1>
-          <motion.p variants={reveal} className="hero-lead">Trace a payment from capture to settlement, bank credit, and merchant ledger—then explain the first failure with auditable evidence.</motion.p>
-          <motion.div variants={reveal} className="search-area" ref={searchRef}>
-            <form className="search-shell" onSubmit={(event) => { event.preventDefault(); void investigate(query); }}>
-              <Search size={20} aria-hidden="true" />
-              <Input value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} aria-label="Transaction ID, date, or support question" autoComplete="off" placeholder="Ask about TXN-1048, a settlement date, or failed transactions…" />
-              <AnimatePresence>{query && <motion.button className="search-clear" type="button" aria-label="Clear search" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }} onClick={() => { setQuery(''); setListResults(null); }}><X size={16} /></motion.button>}</AnimatePresence>
-              <Button type="submit" disabled={isTracing || !query.trim()}>{isTracing ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Investigate <ArrowRight size={17} /></Button>
-            </form>
-            <AnimatePresence>{searchOpen && visibleSuggestions.length > 0 && (
-              <motion.div className="search-suggestions" initial={{ opacity: 0, y: -6, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.18 }}>
-                <span><History size={13} /> Demo and recent searches</span>
-                {visibleSuggestions.map((suggestion) => (
-                  <button key={suggestion} type="button" onClick={() => { const value = suggestion.split(' — ')[0] ?? suggestion; setQuery(value); void investigate(value); }}><Search size={13} />{suggestion}<ArrowRight size={13} /></button>
-                ))}
-              </motion.div>
-            )}</AnimatePresence>
+          <motion.div variants={reveal} className="eyebrow"><ShieldCheck size={15} /> Settlement Trace AI</motion.div>
+          <motion.h1 id="hero-title" variants={reveal}>Follow the money.<br /><span>Find the break.</span></motion.h1>
+          <motion.p variants={reveal} className="hero-lead">Trace settlement failures across payment gateway, settlement, bank, and merchant ledger records using deterministic reconciliation and evidence-grounded AI explanations.</motion.p>
+          <motion.div variants={reveal} className="hero-cta-row">
+            <a className="primary-cta" href="#investigation">Investigate a Transaction <ArrowRight size={17} /></a>
+            <a className="secondary-cta" href="#demo-cases">Explore Demo Cases <ArrowDown size={16} /></a>
           </motion.div>
-          <AnimatePresence>{parsedQuery.chips.length > 0 && <motion.div className="query-chips" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}>{parsedQuery.chips.map((chip) => <span key={chip}>{chip}</span>)}</motion.div>}</AnimatePresence>
-          <motion.div variants={reveal} className="hero-actions"><a href="#demo-cases">View Demo Cases <ArrowDown size={14} /></a><span><Bot size={14} /> Dates and filters route deterministically</span></motion.div>
+          <motion.p variants={reveal} className="hero-disclaimer"><CircleAlert size={15} /> Simulated dataset — not live financial data.</motion.p>
           <motion.div variants={reveal} className="trust-row" aria-label="Product guarantees">
-            {[<><CheckCircle2 size={14} /> Deterministic reconciliation</>, <><Fingerprint size={14} /> Explainable confidence</>, <><Database size={14} /> Synthetic evidence</>, <><Layers3 size={14} /> Grounded AI fallback</>].map((content, index) => <motion.span key={index} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: reducedMotion ? 0 : 0.45 + index * 0.07 }}>{content}</motion.span>)}
+            {[<><Sparkles size={14} /> Evidence-grounded AI</>, <><CheckCircle2 size={14} /> Deterministic reconciliation</>, <><Fingerprint size={14} /> Explainable confidence</>, <><Database size={14} /> Synthetic sandbox data</>].map((content, index) => <motion.span key={index} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: reducedMotion ? 0 : 0.45 + index * 0.07 }}>{content}</motion.span>)}
           </motion.div>
+          <motion.div variants={reveal} className="hero-metrics" aria-label="Product scope"><span><strong>{demoCases.length}</strong> real demo scenarios</span><span><strong>4</strong> reconciled systems</span><span><strong>1</strong> deterministic truth layer</span></motion.div>
         </motion.div>
 
         <motion.div
@@ -327,19 +362,94 @@ export function InvestigationShell({ referenceTime }: { referenceTime: string })
           initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.45 }}
         >
           <div className="scene-kicker"><span>Live trace model</span><small>Click a stage to inspect evidence</small></div>
-          <PipelineExperience timeline={result.timeline} selectedStage={selectedStage} onStageSelect={setSelectedStage} transactionId={result.transactionId} />
-          <AnimatePresence mode="wait"><motion.div key={result.transactionId} className="hero-readout" initial={{ opacity: 0, y: 9 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -7 }}>
-            <span>TRACE / {result.transactionId.replace('TXN-', '')}</span><strong>{result.rootCause}</strong><small>{result.confidence}% confidence · {statusCopy[result.status]}</small>
+          <PipelineExperience timeline={heroResult.timeline} selectedStage={heroDemo.stage} onStageSelect={(stage) => setHeroDemo((current) => ({ ...current, stage }))} transactionId={heroResult.transactionId} />
+          <AnimatePresence mode="wait"><motion.div key={heroResult.transactionId} className="hero-readout" initial={{ opacity: 0, y: 9 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -7 }}>
+            <span>LIVE DEMO / {heroResult.transactionId}</span><strong>{heroResult.rootCause}</strong><small>{heroResult.confidence}% confidence · {statusCopy[heroResult.status]}</small>
           </motion.div></AnimatePresence>
+          <div className="hero-demo-controls" aria-label="Hero demo transaction">
+            {heroDemoIds.map((transactionId, index) => <button key={transactionId} type="button" className={index === heroDemo.index ? 'active' : ''} aria-label={`Show ${transactionId} demo`} aria-pressed={index === heroDemo.index} onClick={() => setHeroDemo({ index, stage: reconcileTransaction(transactionId, initialDataset, referenceDate).stage })} />)}
+          </div>
         </motion.div>
       </section>
 
-      <AnimatePresence>{isTracing && <TraceLoading />}</AnimatePresence>
-      {listResults && <ResultList results={listResults} query={parsedQuery} onSelect={(transactionId) => void investigate(transactionId)} />}
+      <section id="product" className="landing-section problem-section" aria-labelledby="problem-title">
+        <SectionReveal className="landing-split">
+          <div><span className="section-kicker">The settlement blind spot</span><h2 id="problem-title">One payment. Four systems. Too many places to look.</h2></div>
+          <p>A single settlement crosses independent gateway, processor, bank, and ledger records. When one event disappears or conflicts, support teams are forced to compare timestamps and references by hand. Settlement Trace turns that fragmented evidence into one auditable answer.</p>
+        </SectionReveal>
+      </section>
+
+      <section id="how-it-works" className="landing-section" aria-labelledby="how-title">
+        <SectionReveal>
+          <div className="landing-heading"><span className="section-kicker">How it works</span><h2 id="how-title">Trace every handoff. Explain the first break.</h2><p>The language model explains a structured finding; it never decides the financial facts.</p></div>
+          <div className="process-grid">
+            {[
+              ['01', 'Trace', 'Collect evidence from gateway, settlement, bank, and ledger records.', Network],
+              ['02', 'Reconcile', 'Join identifiers, amounts, currency, merchants, timestamps, and references.', Route],
+              ['03', 'Detect', 'Surface missing stages, mismatches, duplicates, and impossible chronology.', CircleAlert],
+              ['04', 'Explain', 'Turn the deterministic result into a concise support action with an honest fallback.', Bot],
+            ].map(([number, title, copy, Icon], index) => (
+              <motion.article key={String(title)} initial={reducedMotion ? false : { opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: reducedMotion ? 0 : index * 0.06 }}>
+                <span>{String(number)}</span><Icon size={20} /><h3>{String(title)}</h3><p>{String(copy)}</p>
+              </motion.article>
+            ))}
+          </div>
+        </SectionReveal>
+      </section>
+
+      <section className="landing-section why-section" aria-labelledby="why-title">
+        <SectionReveal>
+          <div className="landing-heading"><span className="section-kicker">Why Settlement Trace AI</span><h2 id="why-title">Clear enough for support. Rigorous enough for audit.</h2></div>
+          <div className="feature-grid">
+            <article><ShieldCheck size={21} /><h3>Deterministic truth</h3><p>Every status and confidence deduction comes from testable reconciliation rules.</p></article>
+            <article><Sparkles size={21} /><h3>Grounded explanation</h3><p>AI receives only structured findings and falls back safely when unavailable.</p></article>
+            <article><Gauge size={21} /><h3>Explainable confidence</h3><p>Missing or conflicting evidence visibly lowers confidence—never by chance.</p></article>
+            <article><Layers3 size={21} /><h3>Evidence in context</h3><p>The 3D pipeline, timeline, and source panels stay synchronized stage by stage.</p></article>
+          </div>
+        </SectionReveal>
+      </section>
+
+      <section id="demo-cases" className="landing-section landing-demo-section" aria-labelledby="landing-demo-title">
+        <SectionReveal>
+          <div className="landing-heading"><span className="section-kicker">Interactive demo cases</span><h2 id="landing-demo-title">See how the engine handles the messy cases.</h2><p>Select a real synthetic scenario to open the complete investigation.</p></div>
+          <div className="landing-demo-grid">
+            {landingDemoIds.map((transactionId, index) => {
+              const demo = demoCases.find((item) => item.transactionId === transactionId)!;
+              return <motion.button key={transactionId} type="button" initial={reducedMotion ? false : { opacity: 0, y: 14 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: reducedMotion ? 0 : index * 0.045 }} onClick={() => void investigate(transactionId)}><span><b>{transactionId}</b><em data-status={demo.category}>{demo.category}</em></span><strong>{demo.label}</strong><small>{demo.summary}</small><ArrowRight size={16} /></motion.button>;
+            })}
+          </div>
+        </SectionReveal>
+      </section>
+
+      <section className="landing-section final-cta-section" aria-labelledby="final-cta-title">
+        <SectionReveal className="final-cta-card"><div><span className="section-kicker">Ready to trace the break?</span><h2 id="final-cta-title">Investigate a settlement in seconds.</h2><p>Search by transaction ID, date, or a plain-language support question.</p></div><a className="primary-cta" href="#investigation">Open Investigation <ArrowRight size={17} /></a></SectionReveal>
+      </section>
 
       <div className="sandbox-banner"><CircleAlert size={17} /><strong>Simulated dataset — not live financial data.</strong><span>Every finding is computed from synthetic source records.</span></div>
 
       <section id="investigation" className="workspace-shell" aria-live="polite">
+        <div className="investigation-entry">
+          <div className="landing-heading"><span className="section-kicker">Investigation workspace</span><h2>Ask where the settlement stopped.</h2><p>Use a transaction ID, an exact date, or an obvious status filter. Query routing stays deterministic.</p></div>
+          <div className="search-area" ref={searchRef}>
+            <form className="search-shell" onSubmit={(event) => { event.preventDefault(); void investigate(query); }}>
+              <Search size={20} aria-hidden="true" />
+              <Input id="investigation-query" value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} aria-label="Transaction ID, date, or support question" autoComplete="off" placeholder="Ask about TXN-1048, a settlement date, or failed transactions…" />
+              <AnimatePresence>{query && <motion.button className="search-clear" type="button" aria-label="Clear search" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }} onClick={() => { setQuery(''); setListResults(null); }}><X size={16} /></motion.button>}</AnimatePresence>
+              <Button type="submit" disabled={isTracing || !query.trim()}>{isTracing ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Investigate <ArrowRight size={17} /></Button>
+            </form>
+            <AnimatePresence>{searchOpen && visibleSuggestions.length > 0 && (
+              <motion.div className="search-suggestions" initial={{ opacity: 0, y: -6, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.18 }}>
+                <span><History size={13} /> Demo and recent searches</span>
+                {visibleSuggestions.map((suggestion) => (
+                  <button key={suggestion} type="button" onClick={() => { const value = suggestion.split(' — ')[0] ?? suggestion; setQuery(value); void investigate(value); }}><Search size={13} />{suggestion}<ArrowRight size={13} /></button>
+                ))}
+              </motion.div>
+            )}</AnimatePresence>
+          </div>
+          <AnimatePresence>{parsedQuery.chips.length > 0 && <motion.div className="query-chips" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}>{parsedQuery.chips.map((chip) => <span key={chip}>{chip}</span>)}</motion.div>}</AnimatePresence>
+        </div>
+        <AnimatePresence>{isTracing && <TraceLoading />}</AnimatePresence>
+        {listResults && <ResultList results={listResults} query={parsedQuery} onSelect={(transactionId) => void investigate(transactionId)} />}
         <AnimatePresence mode="wait">
           <motion.div key={result.transactionId} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: reducedMotion ? 0.01 : 0.24 }}>
             <div className="section-heading">
@@ -376,7 +486,7 @@ export function InvestigationShell({ referenceTime }: { referenceTime: string })
                   <motion.div className="action-box" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: reducedMotion ? 0 : 0.18 }}><span>Recommended next support action</span><p>{explanation.explanation.recommendedAction}</p></motion.div>
                 </article>
 
-                <aside className="demo-panel" id="demo-cases">
+                <aside className="demo-panel" id="workspace-demo-cases">
                   <div className="panel-title"><span>Demo cases</span><small>{demoCases.length} scenarios</small></div><p className="panel-intro">Every outcome is computed at click time—answers are never hardcoded.</p>
                   <div className="demo-list">{demoCases.map((item) => (
                     <button key={item.transactionId} type="button" onClick={() => void investigate(item.transactionId)} className={item.transactionId === result.transactionId ? 'active' : ''}><span><b>{item.transactionId}</b><small>{item.label}</small></span><em data-status={item.category}>{item.category}</em></button>

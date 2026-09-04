@@ -1,8 +1,18 @@
 # Settlement Trace AI
 
+**Repository:** [github.com/Akshit-Singh-00/settlement-trace-ai](https://github.com/Akshit-Singh-00/settlement-trace-ai)
+
 Settlement Trace AI is an evidence-grounded investigation workspace for payment operations teams. It traces a transaction through the payment gateway, settlement processor, bank, and merchant ledger; identifies the first reliable break; explains the evidence; and recommends a support action.
 
 > **Simulated-data disclaimer:** every transaction, merchant, amount, timestamp, and reference bundled with this repository is synthetic. Do not upload live financial or personal data to the public demo.
+
+## Screenshots
+
+![Animated Settlement Trace AI landing page in dark mode](public/screenshots/landing-dark.png)
+
+| Light investigation workspace | Conflicting evidence in dark mode |
+| --- | --- |
+| ![Transaction investigation in the complete light theme](public/screenshots/investigation-light.png) | ![Synchronized evidence and uncertainty panels](public/screenshots/conflict-evidence-dark.png) |
 
 ## Problem statement
 
@@ -30,6 +40,8 @@ The deterministic engine in `lib/reconciliation.ts` is the source of truth. The 
 
 ## Product capabilities
 
+- Dedicated animated landing experience with an interactive, real-data hero trace and direct demo-case handoff
+- Accessible compact navigation with a responsive mobile menu and persistent theme controls
 - Transaction investigation by direct ID or a question such as “Why is TXN-1048 pending?”
 - Date search for ISO and common English formats, including “3 September 2026,” “September 3,” and “today”
 - Deterministic filters for successful, pending, delayed, failed, mismatch, and uncertain cases
@@ -132,6 +144,8 @@ pnpm test:e2e
 
 The Vitest suite covers original scenarios plus chronology conflicts, reference/merchant/currency mismatches, missing and contradictory evidence, confidence deductions, date/filter parsing, CSV recovery, and deterministic AI fallback. The Playwright suite uses behavior assertions—not screenshot-only checks—for successful/delayed/uncertain investigation, synchronized evidence selection, theme persistence, date drill-down, valid and invalid CSVs, unknown IDs, and no-key fallback.
 
+GitHub Actions runs install, unit tests, typecheck, lint, production build, and Chromium E2E tests on every pull request and push to `main`.
+
 ## Deployment
 
 The single supported deployment path is the existing Vinext → Cloudflare Worker pipeline managed by OpenAI Sites. `vite.config.ts` includes both the Cloudflare and Sites plugins, and `.openai/hosting.json` holds the Sites project association.
@@ -158,7 +172,7 @@ deliverables/                  Brief hackathon presentation
 
 1. Open `TXN-1001` to establish the healthy path.
 2. Ask “Why is TXN-1048 pending?” to show deterministic routing, missing evidence, SLA impact, and fallback-safe explanation.
-3. Search “Show failed transactions from September 3” and open `TXN-1071`.
+3. Search “Show failed transactions from September 3 2026” and open `TXN-1071`.
 4. Open `TXN-1097` to demonstrate honest uncertainty instead of fabricated certainty.
 5. Select Bank in the 3D pipeline or timeline and show the synchronized evidence panel.
 6. Switch light/dark mode, import a synthetic CSV, download the report, and finish on Operations.

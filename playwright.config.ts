@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const webServerCommand = process.platform === 'win32'
+  ? 'node_modules\\.bin\\vinext.cmd dev --port 4173'
+  : 'pnpm exec vinext dev --port 4173';
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
@@ -14,13 +18,19 @@ export default defineConfig({
     video: 'off',
   },
   webServer: {
-    command: 'node_modules\\.bin\\vinext.cmd dev --port 4173',
+    command: webServerCommand,
     url: 'http://localhost:4173',
     reuseExistingServer: true,
     timeout: 120_000,
     env: { ...process.env, GEMINI_API_KEY: '' },
   },
   projects: [
-    { name: 'desktop-edge', use: { ...devices['Desktop Edge'], channel: 'msedge' } },
+    {
+      name: 'desktop',
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(process.env.CI ? {} : { channel: 'msedge' as const }),
+      },
+    },
   ],
 });

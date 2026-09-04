@@ -11,6 +11,46 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-app-ready', 'true');
 });
 
+test('landing page communicates the product and leads into investigation', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: 'Follow the money. Find the break.' })).toBeVisible();
+  await expect(page.getByText('Simulated dataset — not live financial data.', { exact: true }).first()).toBeVisible();
+  await page.getByRole('link', { name: 'Investigate a Transaction' }).click();
+  await expect(page.getByRole('heading', { name: 'Ask where the settlement stopped.' })).toBeInViewport();
+});
+
+test('mobile navigation remains keyboard-accessible', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.reload();
+  const menu = page.getByRole('button', { name: 'Open navigation menu' });
+  await menu.focus();
+  await menu.press('Enter');
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'How it works' })).toBeVisible();
+});
+
+test('avoids page-level overflow at submission breakpoints', async ({ page }) => {
+  for (const width of [375, 430, 768, 1280, 1440]) {
+    await page.setViewportSize({ width, height: width < 700 ? 812 : 900 });
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-app-ready', 'true');
+    const dimensions = await page.evaluate(() => ({ viewport: window.innerWidth, page: document.documentElement.scrollWidth }));
+    expect(dimensions.page, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport);
+  }
+});
+
+test('loads landing and investigation without runtime errors', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-app-ready', 'true');
+  await page.locator('#demo-cases').getByRole('button').filter({ hasText: 'TXN-1055' }).click();
+  await expect(page.getByRole('heading', { name: 'TXN-1055' })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test('searches a successful transaction and shows a reconciled result', async ({ page }) => {
   await search(page, 'TXN-1001');
   await expect(page.getByRole('heading', { name: 'TXN-1001' })).toBeVisible();
@@ -48,7 +88,7 @@ test('persists a light theme selection after reload', async ({ page }) => {
 });
 
 test('searches by date and opens a matching transaction', async ({ page }) => {
-  await search(page, 'Show failed transactions from September 3');
+  await search(page, 'Show failed transactions from September 3 2026');
   await expect(page.getByText('Matching transactions', { exact: true })).toBeVisible();
   await page.locator('.query-result-grid').getByRole('button').filter({ hasText: 'TXN-1071' }).click();
   await expect(page.getByRole('heading', { name: 'TXN-1071' })).toBeVisible();
