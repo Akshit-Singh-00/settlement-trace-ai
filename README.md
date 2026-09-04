@@ -1,5 +1,9 @@
 # Settlement Trace AI
 
+🚀 **Live Demo:** [Open Settlement Trace AI](https://settlement-trace-ai.nikhilgurnani0524.chatgpt.site)
+
+> Simulated dataset — not live financial data.
+
 **Repository:** [github.com/Akshit-Singh-00/settlement-trace-ai](https://github.com/Akshit-Singh-00/settlement-trace-ai)
 
 Settlement Trace AI is an evidence-grounded investigation workspace for payment operations teams. It traces a transaction through the payment gateway, settlement processor, bank, and merchant ledger; identifies the first reliable break; explains the evidence; and recommends a support action.
@@ -41,7 +45,11 @@ The deterministic engine in `lib/reconciliation.ts` is the source of truth. The 
 ## Product capabilities
 
 - Dedicated animated landing experience with an interactive, real-data hero trace and direct demo-case handoff
-- Accessible compact navigation with a responsive mobile menu and persistent theme controls
+- Short branded pipeline loader, followed by a coordinated landing and navigation reveal
+- Animated views for Investigation, Dashboard, Demo Cases, CSV Upload, and Reports, with working browser history and refresh
+- Sliding active navigation indicator and an accessible mobile drawer with focus trapping, Escape dismissal, and scroll restoration
+- Result-driven tracing that stops at the first incomplete stage, with cancellation of stale searches
+- Persistent Light / Dark / System controls, smooth surface transitions, and stable 3D theme updates
 - Transaction investigation by direct ID or a question such as “Why is TXN-1048 pending?”
 - Date search for ISO and common English formats, including “3 September 2026,” “September 3,” and “today”
 - Deterministic filters for successful, pending, delayed, failed, mismatch, and uncertain cases
@@ -147,6 +155,8 @@ The Vitest suite covers original scenarios plus chronology conflicts, reference/
 GitHub Actions runs install, unit tests, typecheck, lint, production build, and Chromium E2E tests on every pull request and push to `main`.
 
 ## Deployment
+
+The live demo is publicly accessible without a ChatGPT or OpenAI login. The homepage and explanation endpoint have been checked from a fresh browser context without saved cookies. Views use URL fragments on `/`, so refreshing `/#investigation`, `/#dashboard`, or `/#reports` does not require a separate server route.
 
 The single supported deployment path is the existing Vinext → Cloudflare Worker pipeline managed by OpenAI Sites. `vite.config.ts` includes both the Cloudflare and Sites plugins, and `.openai/hosting.json` holds the Sites project association.
 
