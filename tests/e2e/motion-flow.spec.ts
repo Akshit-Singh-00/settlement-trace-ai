@@ -39,19 +39,40 @@ test('all views preserve the selected investigation and support history and refr
 
 test('trace stops at bank and never activates a downstream waiting ledger', async ({ page }) => {
   await ready(page, '/#investigation');
+  // Capture transient DOM state as it appears so slow CI assertions cannot miss the trace.
+  const traceHistory = await page.evaluateHandle(() => {
+    const snapshots: Record<string, Record<string, string | boolean | null>> = {};
+    const observer = new MutationObserver(() => {
+      const trace = document.querySelector('.trace-loading-panel .trace-sequence');
+      const transaction = trace?.getAttribute('data-transaction');
+      if (!trace || !transaction || snapshots[transaction]) return;
+      const bounds = trace.getBoundingClientRect();
+      snapshots[transaction] = {
+        settlement: trace.querySelector('[data-stage="settlement"]')?.getAttribute('data-status') ?? null,
+        bank: trace.querySelector('[data-stage="bank"]')?.getAttribute('data-status') ?? null,
+        ledger: trace.querySelector('[data-stage="ledger"]')?.getAttribute('data-status') ?? null,
+        bankFlow: trace.querySelector('[data-stage="bank"] .sequence-connector')?.getAttribute('data-flow') ?? null,
+        inViewport: bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.top < innerHeight
+          && bounds.right > 0 && bounds.left < innerWidth,
+      };
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    return { snapshots, disconnect: () => observer.disconnect() };
+  });
   await page.getByRole('textbox').fill('TXN-1055');
   await page.getByRole('textbox').press('Enter');
-  const trace = page.locator('.trace-loading-panel .trace-sequence');
-  await expect(trace).toHaveAttribute('data-transaction', 'TXN-1055');
-  await expect(trace).toBeInViewport();
-  await expect(trace.locator('[data-stage="ledger"]')).toHaveAttribute('data-status', 'waiting');
-  await expect(trace.locator('[data-stage="bank"] .sequence-connector')).toHaveAttribute('data-flow', 'false');
+  await expect.poll(() => traceHistory.evaluate(({ snapshots }) => snapshots['TXN-1055'])).toMatchObject({
+    ledger: 'waiting', bankFlow: 'false', inViewport: true,
+  });
   await expect(page.getByRole('heading', { name: 'TXN-1055' })).toBeVisible();
   await page.getByRole('textbox').fill('TXN-1071');
   await page.getByRole('textbox').press('Enter');
-  await expect(trace.locator('[data-stage="settlement"]')).toHaveAttribute('data-status', 'failed');
-  await expect(trace.locator('[data-stage="bank"]')).toHaveAttribute('data-status', 'waiting');
+  await expect.poll(() => traceHistory.evaluate(({ snapshots }) => snapshots['TXN-1071'])).toMatchObject({
+    settlement: 'failed', bank: 'waiting',
+  });
   await expect(page.locator('.status-pill')).toHaveText('Failed');
+  await traceHistory.evaluate(({ disconnect }) => disconnect());
+  await traceHistory.dispose();
 });
 
 test('leaving during a trace cancels stale completion and restores navigation', async ({ page }) => {
