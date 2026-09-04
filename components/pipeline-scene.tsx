@@ -5,6 +5,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { PipelineStage, StageStatus, TimelineStage } from '@/lib/settlement-types';
+import { statusForStage, traceStopIndex } from '@/lib/pipeline-presentation';
 
 const pipelineStages: Array<{ id: PipelineStage; label: string; short: string }> = [
   { id: 'gateway', label: 'Payment Gateway', short: 'Gateway' },
@@ -29,11 +30,6 @@ const statusColors: Record<StageStatus, string> = {
   missing: '#ff657a',
   mismatch: '#c58cff',
 };
-
-function statusForStage(timeline: TimelineStage[], stage: PipelineStage): StageStatus {
-  const matches = timeline.filter((item) => item.stage === stage);
-  return matches.find((item) => item.status !== 'complete')?.status ?? matches.at(-1)?.status ?? 'pending';
-}
 
 function FlowParticle({
   start,
@@ -83,10 +79,13 @@ function StageNode({
   theme: 'light' | 'dark';
 }) {
   const group = useRef<THREE.Group>(null);
+  const material = useRef<THREE.MeshPhysicalMaterial>(null);
   const [hovered, setHovered] = useState(false);
   const color = statusColors[status];
 
-  useFrame(({ clock }) => {
+  const targetColor = useMemo(() => new THREE.Color(theme === 'dark' ? (selected ? '#122d42' : '#081625') : (selected ? '#d8f3fa' : '#f4f8fb')), [theme, selected]);
+  useFrame(({ clock }, delta) => {
+    material.current?.color.lerp(targetColor, 1 - Math.exp(-delta * 10));
     if (!group.current) return;
     const desiredY = position[1] + (hovered ? 0.13 : 0) + Math.sin(clock.elapsedTime * 0.75 + position[0]) * 0.06;
     group.current.position.y = THREE.MathUtils.lerp(group.current.position.y, desiredY, 0.12);
@@ -106,7 +105,7 @@ function StageNode({
     >
       <RoundedBox args={[1.78, 1.14, 0.52]} radius={0.18} smoothness={4}>
         <meshPhysicalMaterial
-          color={theme === 'dark' ? (selected ? '#122d42' : '#081625') : (selected ? '#d8f3fa' : '#f4f8fb')}
+          ref={material}
           emissive={color}
           emissiveIntensity={selected ? 0.22 : 0.08}
           metalness={theme === 'dark' ? 0.42 : 0.12}
@@ -154,12 +153,18 @@ function Scene({
 }) {
   const scene = useRef<THREE.Group>(null);
   const entrance = useRef(0);
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   const vectors = useMemo(() => positions.map((position) => new THREE.Vector3(...position)), []);
   const selectedIndex = pipelineStages.findIndex((stage) => stage.id === selectedStage);
   const targetCamera = useMemo(() => new THREE.Vector3((selectedIndex - 1.5) * 0.22, 1.2, 11.6), [selectedIndex]);
 
   useEffect(() => { entrance.current = 0; }, [transactionId]);
+  useEffect(() => {
+    // Keep the same readable scene scale in a wide workspace and a square hero.
+    // oxlint-disable-next-line react/react-compiler -- Three.js cameras are mutable scene objects, not React state.
+    camera.zoom = Math.min(2.1, Math.max(1, size.width / size.height / 1.35));
+    camera.updateProjectionMatrix();
+  }, [camera, size.width, size.height]);
 
   useFrame((_, delta) => {
     if (!scene.current) return;
@@ -187,7 +192,7 @@ function Scene({
             [(from.x + to.x) / 2, Math.max(from.y, to.y) + 0.48, 0],
             [to.x - 0.86, to.y, to.z],
           ];
-          const flowAllowed = !['failed', 'missing', 'mismatch', 'delayed'].includes(nextStatus);
+          const flowAllowed = index < traceStopIndex(timeline) && !['failed', 'missing', 'mismatch', 'delayed'].includes(nextStatus);
           const flowSpeed = ['current', 'pending'].includes(nextStatus) ? 0.13 : 0.24;
           return (
             <group key={stage.id}>

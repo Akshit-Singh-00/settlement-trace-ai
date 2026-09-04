@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useId, useMemo } from 'react';
 import { CircleAlert, Database, FileWarning, ShieldCheck } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import type { EvidenceGroup, PipelineStage, ValidationIssue } from '@/lib/settlement-types';
 
 const sourceToStage: Record<EvidenceGroup['source'], PipelineStage> = {
@@ -49,6 +49,7 @@ export function EvidenceInspector({
   onStageSelect: (stage: PipelineStage) => void;
 }) {
   const activeSource = stageToSource[selectedStage];
+  const groupId = useId();
 
   const group = useMemo(
     () => evidence.find((item) => item.source === activeSource) ?? evidence[0],
@@ -61,7 +62,7 @@ export function EvidenceInspector({
         <span id="evidence-title"><Database size={15} /> Evidence inspector</span>
         <small>{group.records.length} source record{group.records.length === 1 ? '' : 's'}</small>
       </div>
-      <div className="evidence-tabs" role="tablist" aria-label="Evidence source">
+      <LayoutGroup id={groupId}><div className="evidence-tabs" role="tablist" aria-label="Evidence source">
         {evidence.map((item) => (
           <button
             key={item.source}
@@ -73,11 +74,12 @@ export function EvidenceInspector({
               onStageSelect(sourceToStage[item.source]);
             }}
           >
+            {item.source === activeSource && <motion.i layoutId="evidence-selection" className="evidence-tab-indicator" />}
             {item.source}
             <span>{item.records.length}</span>
           </button>
         ))}
-      </div>
+      </div></LayoutGroup>
 
       <AnimatePresence mode="wait">
       {group.records.length === 0 ? (

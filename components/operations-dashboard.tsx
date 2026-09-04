@@ -69,7 +69,7 @@ export function OperationsDashboard({
 
   return (
     <section className="dashboard-section" id="operations" aria-labelledby="operations-title">
-      <div className="section-heading compact-heading"><div><span className="section-kicker">Support operations</span><h2 id="operations-title">Settlement health at a glance</h2></div><span className="dashboard-caption"><Activity size={14} /> Derived from reconciliation results</span></div>
+      <div className="section-heading compact-heading"><div><span className="section-kicker">Support operations</span><h2 id="operations-title" tabIndex={-1}>Settlement health at a glance</h2></div><span className="dashboard-caption"><Activity size={14} /> Derived from reconciliation results</span></div>
 
       <motion.div className="metrics-grid" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.25 }} variants={{ visible: { transition: { delayChildren: reducedMotion ? 0 : stagger(0.055) } } }}>
         {metrics.map((metric) => {

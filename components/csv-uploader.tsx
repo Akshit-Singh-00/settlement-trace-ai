@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CheckCircle2, FileUp, LoaderCircle, RotateCcw, ShieldAlert, UploadCloud } from 'lucide-react';
+import { CheckCircle2, FileUp, RotateCcw, ShieldAlert, UploadCloud } from 'lucide-react';
+import { TraceSequence } from '@/components/motion-system';
 import { CsvValidationError, parseSyntheticCsv, replaceDatasetSource, type CsvSource } from '@/lib/csv-import';
 import type { SettlementDataset } from '@/lib/settlement-types';
 
@@ -35,7 +36,10 @@ export function CsvUploader({
     setProcessing(source);
     setMessage(undefined);
     try {
-      const records = parseSyntheticCsv(source, await file.text());
+      const text = await file.text();
+      // Yield a paint before validation so larger imports expose their actual processing state.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+      const records = parseSyntheticCsv(source, text);
       onDatasetChange(replaceDatasetSource(dataset, source, records));
       setMessage({ tone: 'success', text: `${records.length} ${source} record${records.length === 1 ? '' : 's'} validated and loaded.` });
     } catch (error) {
@@ -48,7 +52,7 @@ export function CsvUploader({
   }
 
   return (
-    <section className="upload-card" aria-labelledby="upload-title">
+    <section className="upload-card" aria-labelledby="upload-title" aria-busy={Boolean(processing)}>
       <div className="upload-copy">
         <span className="section-kicker">Optional data lab</span>
         <h3 id="upload-title"><UploadCloud size={21} /> Load your synthetic CSVs</h3>
@@ -61,16 +65,18 @@ export function CsvUploader({
             key={source.id}
             className={dragging === source.id ? 'dragging' : ''}
             whileTap={{ scale: 0.99 }}
-            onDragEnter={() => setDragging(source.id)}
+            onDragEnter={(event) => { event.preventDefault(); setDragging(source.id); }}
+            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
             onDragLeave={() => setDragging(undefined)}
-            onDrop={() => setDragging(undefined)}
+            onDrop={(event) => { event.preventDefault(); if (!processing) void importFile(source.id, event.dataTransfer.files[0]); }}
           >
-            {processing === source.id ? <LoaderCircle className="spin" size={17} /> : <FileUp size={17} />}
+            <FileUp size={17} />
             <span><strong>{source.label}</strong><small>{source.hint}</small></span>
             <input aria-label={`Upload ${source.label}`} type="file" accept=".csv,text/csv" disabled={Boolean(processing)} onChange={(event) => { void importFile(source.id, event.target.files?.[0]); event.currentTarget.value = ''; }} />
           </motion.label>
         ))}
       </div>
+      {processing && <div className="upload-progress"><TraceSequence label={`Validating ${processing} records…`} /></div>}
       <AnimatePresence>{message && (
         <motion.output initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className={`upload-message ${message.tone}`}>
           <span>{message.tone === 'success' ? <CheckCircle2 size={16} /> : <ShieldAlert size={16} />}{message.text}</span>

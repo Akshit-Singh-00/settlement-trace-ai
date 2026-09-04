@@ -2,21 +2,10 @@
 
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useTheme } from '@/components/theme-provider';
-import type { PipelineStage, StageStatus, TimelineStage } from '@/lib/settlement-types';
+import type { PipelineStage, TimelineStage } from '@/lib/settlement-types';
+import { pipelineStages as labels, statusForStage } from '@/lib/pipeline-presentation';
 
 const PipelineScene = lazy(() => import('@/components/pipeline-scene'));
-
-const labels: Array<{ id: PipelineStage; label: string }> = [
-  { id: 'gateway', label: 'Gateway' },
-  { id: 'settlement', label: 'Settlement' },
-  { id: 'bank', label: 'Bank' },
-  { id: 'ledger', label: 'Ledger' },
-];
-
-function statusForStage(timeline: TimelineStage[], stage: PipelineStage): StageStatus {
-  const matches = timeline.filter((item) => item.stage === stage);
-  return matches.find((item) => item.status !== 'complete')?.status ?? matches.at(-1)?.status ?? 'pending';
-}
 
 function PipelineFallback({
   timeline,
@@ -65,16 +54,25 @@ export function PipelineExperience({
   const { resolvedTheme } = useTheme();
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const constrained = window.innerWidth < 640 || (navigator.hardwareConcurrency ?? 4) <= 2;
-      if (reduced || constrained) return;
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const narrow = window.matchMedia('(max-width: 639px)');
+    let webgl: boolean | undefined;
+    const update = () => {
+      if (motionPreference.matches || narrow.matches || (navigator.hardwareConcurrency ?? 4) <= 2) {
+        setSupports3d(false);
+        return;
+      }
+      if (webgl !== undefined) { setSupports3d(webgl); return; }
       const testCanvas = document.createElement('canvas');
       const context = testCanvas.getContext('webgl2') ?? testCanvas.getContext('webgl');
-      setSupports3d(Boolean(context));
+      webgl = Boolean(context);
+      setSupports3d(webgl);
       context?.getExtension('WEBGL_lose_context')?.loseContext();
-    });
-    return () => cancelAnimationFrame(frame);
+    };
+    const frame = requestAnimationFrame(update);
+    motionPreference.addEventListener('change', update);
+    narrow.addEventListener('change', update);
+    return () => { cancelAnimationFrame(frame); motionPreference.removeEventListener('change', update); narrow.removeEventListener('change', update); };
   }, []);
 
   if (!supports3d) {

@@ -1,6 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
 async function search(page: Page, query: string) {
+  if (!await page.getByRole('textbox', { name: 'Transaction ID, date, or support question' }).isVisible()) {
+    await page.locator('.desktop-navigation').getByRole('link', { name: 'Investigation', exact: true }).click();
+  }
   const input = page.getByRole('textbox', { name: 'Transaction ID, date, or support question' });
   await input.fill(query);
   await input.press('Enter');
@@ -22,9 +25,10 @@ test('mobile navigation remains keyboard-accessible', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.reload();
   const menu = page.getByRole('button', { name: 'Open navigation menu' });
+  await expect(page.locator('.boot-overlay')).toHaveCount(0);
   await menu.focus();
   await menu.press('Enter');
-  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'How it works' })).toBeVisible();
 });
 
@@ -96,6 +100,7 @@ test('searches by date and opens a matching transaction', async ({ page }) => {
 });
 
 test('imports a valid synthetic CSV and investigates its transaction', async ({ page }) => {
+  await page.goto('/#upload');
   await page.getByLabel('Upload Gateway CSV').setInputFiles({
     name: 'gateway.csv',
     mimeType: 'text/csv',
@@ -111,6 +116,7 @@ test('imports a valid synthetic CSV and investigates its transaction', async ({ 
 });
 
 test('shows recoverable row validation for malformed CSV', async ({ page }) => {
+  await page.goto('/#upload');
   await page.getByLabel('Upload Bank CSV').setInputFiles({
     name: 'bad-bank.csv',
     mimeType: 'text/csv',

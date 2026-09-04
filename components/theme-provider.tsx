@@ -17,17 +17,20 @@ const storageKey = 'settlement-trace-theme';
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
+  const [hydrated, setHydrated] = useState(false);
   const [systemDark, setSystemDark] = useState(() => typeof window === 'undefined' || window.matchMedia('(prefers-color-scheme: dark)').matches);
   const resolvedTheme: ResolvedTheme = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
 
   useEffect(() => {
-    const saved = localStorage.getItem(storageKey);
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(storageKey); } catch { /* Device storage is optional. */ }
     const next = saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
-    const frame = requestAnimationFrame(() => setPreferenceState(next));
+    const frame = requestAnimationFrame(() => { setPreferenceState(next); setHydrated(true); });
     return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
       const nextSystemDark = media.matches;
@@ -42,13 +45,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     apply();
     media.addEventListener('change', handleChange);
     return () => media.removeEventListener('change', handleChange);
-  }, [preference]);
+  }, [preference, hydrated]);
 
   const value = useMemo(() => ({
     preference,
     resolvedTheme,
     setPreference(next: ThemePreference) {
-      localStorage.setItem(storageKey, next);
+      try { localStorage.setItem(storageKey, next); } catch { /* Keep the current session usable. */ }
       setPreferenceState(next);
     },
   }), [preference, resolvedTheme]);
