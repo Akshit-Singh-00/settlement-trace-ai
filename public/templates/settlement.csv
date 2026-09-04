@@ -1,0 +1,1 @@
+settlement_id,transaction_id,amount,currency,status,gateway_reference,created_at,processed_at,utr

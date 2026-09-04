@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { CsvValidationError, parseSyntheticCsv } from './csv-import';
 
 describe('parseSyntheticCsv', () => {
+  it('rejects fractional money and timezone-free dates', () => {
+    const header = 'transaction_id,merchant_id,merchant_name,amount,currency,status,gateway_reference,captured_at,expected_settlement_minutes\n';
+    expect(() => parseSyntheticCsv('gateway', header + 'TXN-5000,MRC-500,Example,12.5,INR,captured,GTW-5000,2026-09-04T10:00:00Z,120')).toThrow('integer in minor units');
+    expect(() => parseSyntheticCsv('gateway', header + 'TXN-5000,MRC-500,Example,1000,INR,captured,GTW-5000,2026-09-04T10:00:00,120')).toThrow('explicit timezone');
+  });
   it('normalizes a valid gateway record', () => {
     const csv = [
       'transaction_id,merchant_id,merchant_name,amount,currency,status,gateway_reference,captured_at,expected_settlement_minutes',

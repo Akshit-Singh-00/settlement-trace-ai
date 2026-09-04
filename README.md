@@ -2,6 +2,10 @@
 
 🚀 **Live Demo:** [Open Settlement Trace AI](https://settlement-trace-ai.vercel.app)
 
+**Team workspace:** [Open the protected workspace](https://settlement-trace-ai.vercel.app/workspace) · [Setup and operating guide](docs/WORKSPACE_SETUP.md)
+
+The workspace adds Supabase PostgreSQL, Google sign-in, Viewer/Investigator/Admin roles, persistent imports, shared cases and notes, saved preferences, an Admin audit trail, configurable SLAs, daily exception scans, Stripe sandbox capture ingestion, and reviewed PDF/image bank-evidence extraction. Google OAuth and each external connector need their corresponding service configuration; the public demo remains available with synthetic evidence.
+
 **Alternate demo:** [OpenAI Sites](https://settlement-trace-ai.nikhilgurnani0524.chatgpt.site)
 
 > Simulated dataset — not live financial data.

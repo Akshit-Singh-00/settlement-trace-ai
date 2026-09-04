@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Laptop, Moon, Sun } from 'lucide-react';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
@@ -47,14 +47,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => media.removeEventListener('change', handleChange);
   }, [preference, hydrated]);
 
+  const setPreference = useCallback((next: ThemePreference) => {
+    try { localStorage.setItem(storageKey, next); } catch { /* Keep the current session usable. */ }
+    setPreferenceState(next);
+  }, []);
   const value = useMemo(() => ({
     preference,
     resolvedTheme,
-    setPreference(next: ThemePreference) {
-      try { localStorage.setItem(storageKey, next); } catch { /* Keep the current session usable. */ }
-      setPreferenceState(next);
-    },
-  }), [preference, resolvedTheme]);
+    setPreference,
+  }), [preference, resolvedTheme, setPreference]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

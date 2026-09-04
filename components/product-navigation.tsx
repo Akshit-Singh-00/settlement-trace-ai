@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 
 import { useEffect, useState } from 'react';
 import { LayoutGroup, motion, useReducedMotion } from 'framer-motion';
@@ -38,7 +39,7 @@ export function ProductNavigation({ view, ready, section, onNavigate }: { view: 
       </motion.a>)}
     </nav></LayoutGroup>
     <motion.div className="header-tools" initial={{ opacity: 0, x: reduced ? 0 : 16 }} animate={ready ? { opacity: 1, x: 0 } : { opacity: 0 }} transition={{ duration: 0.4, delay: 0.1, ease: flowEase }}>
-      <a className="github-link" href="https://github.com/Akshit-Singh-00/settlement-trace-ai" target="_blank" rel="noreferrer">GitHub <ArrowUpRight size={13} /></a><ThemeToggle />
+      <Link className="github-link" href="/workspace">Team workspace <ArrowUpRight size={13} /></Link><a className="github-link" href="https://github.com/Akshit-Singh-00/settlement-trace-ai" target="_blank" rel="noreferrer">GitHub <ArrowUpRight size={13} /></a><ThemeToggle />
     </motion.div>
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger className="mobile-menu-button" aria-label="Open navigation menu"><Menu size={19} /></SheetTrigger>
@@ -46,6 +47,7 @@ export function ProductNavigation({ view, ready, section, onNavigate }: { view: 
         <SheetTitle><span className="brand-mark"><Sparkles size={19} /></span>Settlement Trace AI</SheetTitle>
         <SheetDescription>Follow the evidence across every system.</SheetDescription>
         <nav aria-label="Mobile navigation">
+          <Link href="/workspace">Team workspace <ArrowUpRight size={16} /></Link>
           {[{ id: 'top', label: 'Home' }, { id: 'product', label: 'Product' }, { id: 'how-it-works', label: 'How it works' }, ...workspaceViews].map(({ id, label }, index) => <a key={id} href={`#${id}`} onClick={(event) => select(event, id)} aria-current={active === id ? 'page' : undefined} style={{ '--link-delay': `${index * 25}ms` } as React.CSSProperties}><span>{label}</span><ArrowUpRight size={16} /></a>)}
         </nav>
         <p className="drawer-note">Simulated dataset — not live financial data.</p>

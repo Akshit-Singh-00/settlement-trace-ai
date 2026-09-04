@@ -11,9 +11,9 @@ const icons = {
   ledger: Banknote,
 };
 
-function formatDate(value?: string) {
+function formatDate(value?: string, timeZone?: string) {
   if (!value) return 'Timestamp unavailable';
-  return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+  return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(new Date(value));
 }
 
 function formatLatency(minutes?: number) {
@@ -34,10 +34,12 @@ export function TransactionTimeline({
   timeline,
   selectedStage,
   onStageSelect,
+  timeZone,
 }: {
   timeline: TimelineStage[];
   selectedStage: PipelineStage;
   onStageSelect: (stage: PipelineStage) => void;
+  timeZone?: string;
 }) {
   const reducedMotion = useReducedMotion();
   return (
@@ -68,7 +70,7 @@ export function TransactionTimeline({
               <dl>
                 <div><dt>Source</dt><dd>{item.source}</dd></div>
                 <div><dt>Reference</dt><dd>{item.referenceId ?? 'Not issued'}</dd></div>
-                <div><dt>Time</dt><dd>{formatDate(item.timestamp)}</dd></div>
+                <div><dt>Time</dt><dd>{formatDate(item.timestamp, timeZone)}</dd></div>
                 <div><dt>Latency</dt><dd>{formatLatency(item.latencyMinutes)}</dd></div>
               </dl>
             </motion.button>

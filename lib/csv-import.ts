@@ -39,12 +39,13 @@ function required(value: string | undefined, field: string, row: number) {
 function positiveNumber(value: string | undefined, field: string, row: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`Row ${row}: ${field} must be a positive number.`);
+  if (field === 'amount' && !Number.isSafeInteger(parsed)) throw new Error(`Row ${row}: amount must be an integer in minor units.`);
   return parsed;
 }
 
 function validDate(value: string | undefined, field: string, row: number, optional = false) {
   if (!value?.trim() && optional) return undefined;
-  if (!value || Number.isNaN(new Date(value).getTime())) throw new Error(`Row ${row}: ${field} must be a valid ISO date.`);
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) || Number.isNaN(new Date(value).getTime())) throw new Error(`Row ${row}: ${field} must be an ISO date with an explicit timezone.`);
   return new Date(value).toISOString();
 }
 

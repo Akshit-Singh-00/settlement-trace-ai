@@ -258,7 +258,10 @@ export function reconcileTransaction(
   rawTransactionId: string,
   dataset: SettlementDataset,
   reference = new Date(),
+  sla: { bankMinutes?: number; ledgerMinutes?: number; gatewayMinutes?: number } = {},
 ): InvestigationResult {
+  const bankSlaMinutes = Number.isFinite(sla.bankMinutes) && (sla.bankMinutes ?? 0) > 0 ? sla.bankMinutes! : BANK_SLA_MINUTES;
+  const ledgerSlaMinutes = Number.isFinite(sla.ledgerMinutes) && (sla.ledgerMinutes ?? 0) > 0 ? sla.ledgerMinutes! : LEDGER_SLA_MINUTES;
   const transactionId = rawTransactionId.trim().toUpperCase();
   const gateway = dataset.gateway.find((record) => record.transactionId === transactionId);
   const related = findRelatedRecords(transactionId, gateway, dataset);
@@ -285,12 +288,13 @@ export function reconcileTransaction(
   }
 
   const settlement = related.settlements[0];
+  const gatewaySlaMinutes = Number.isFinite(sla.gatewayMinutes) && (sla.gatewayMinutes ?? 0) > 0 ? sla.gatewayMinutes! : gateway.expectedSettlementMinutes;
   const bank = related.bank[0];
   const ledger = related.ledger[0];
   const captureElapsed = minutesBetween(gateway.capturedAt, reference);
   const capturedTimestamp = timestamp(gateway.capturedAt);
   const expectedSettlementTime = capturedTimestamp !== undefined
-    ? new Date(capturedTimestamp + gateway.expectedSettlementMinutes * 60_000).toISOString()
+    ? new Date(capturedTimestamp + gatewaySlaMinutes * 60_000).toISOString()
     : undefined;
   let validationIssues = [
     ...validateReferences(gateway, related.settlements, related.bank, related.ledger),
@@ -320,32 +324,32 @@ export function reconcileTransaction(
   } else if (gateway.status === 'failed') {
     outcome = { status: 'failed', stage: 'gateway', rootCause: 'Payment capture failed', recommendedAction: 'Return the gateway failure reason to the merchant; do not trace settlement.' };
   } else if (!settlement) {
-    validationIssues.push(issue('missing_settlement', 'Settlement record unavailable', 'Captured payment has no linked settlement record.', 'settlement', captureElapsed !== undefined && captureElapsed > gateway.expectedSettlementMinutes ? 'high' : 'medium'));
-    const overdue = captureElapsed !== undefined && captureElapsed > gateway.expectedSettlementMinutes;
+    validationIssues.push(issue('missing_settlement', 'Settlement record unavailable', 'Captured payment has no linked settlement record.', 'settlement', captureElapsed !== undefined && captureElapsed > gatewaySlaMinutes ? 'high' : 'medium'));
+    const overdue = captureElapsed !== undefined && captureElapsed > gatewaySlaMinutes;
     outcome = overdue
       ? { status: 'delayed', stage: 'settlement', rootCause: 'Captured payment is missing from a settlement batch', recommendedAction: 'Escalate to settlement operations with the gateway reference.' }
-      : { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch has not been created yet', recommendedAction: 'Monitor until the payment reaches its expected settlement cutoff.', slaMinutesRemaining: Math.max(0, gateway.expectedSettlementMinutes - (captureElapsed ?? 0)) };
+      : { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch has not been created yet', recommendedAction: 'Monitor until the payment reaches its expected settlement cutoff.', slaMinutesRemaining: Math.max(0, gatewaySlaMinutes - (captureElapsed ?? 0)) };
   } else if (settlement.status === 'failed') {
     outcome = { status: 'failed', stage: 'settlement', rootCause: 'Settlement batch failed', recommendedAction: 'Escalate the failed settlement ID to payment operations and notify the merchant.' };
   } else if (settlement.status === 'created' || !settlement.processedAt) {
     if (settlement.status === 'processed' && !settlement.processedAt) validationIssues.push(issue('missing_timestamp', 'Settlement processing timestamp unavailable', 'The settlement is marked processed without a processedAt value.', 'settlement'));
     const elapsed = minutesBetween(settlement.createdAt, reference);
-    const remaining = Math.max(0, gateway.expectedSettlementMinutes - (elapsed ?? gateway.expectedSettlementMinutes));
-    outcome = elapsed !== undefined && elapsed <= gateway.expectedSettlementMinutes
+    const remaining = Math.max(0, gatewaySlaMinutes - (elapsed ?? gatewaySlaMinutes));
+    outcome = elapsed !== undefined && elapsed <= gatewaySlaMinutes
       ? { status: 'pending', stage: 'settlement', rootCause: 'Settlement batch is still processing', recommendedAction: 'Continue monitoring; no escalation is needed inside the processing window.', slaMinutesRemaining: remaining }
       : { status: 'delayed', stage: 'settlement', rootCause: 'Settlement processing exceeded its service window', recommendedAction: 'Escalate the delayed batch to settlement operations.' };
   } else if (!bank) {
     validationIssues.push(issue('missing_bank', 'Bank record unavailable', 'Processed settlement has no linked bank record.', 'bank', 'medium'));
     const elapsed = minutesBetween(settlement.processedAt, reference);
-    outcome = elapsed !== undefined && elapsed <= BANK_SLA_MINUTES
-      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is awaiting confirmation', recommendedAction: 'Monitor until the three-hour bank window expires.', slaMinutesRemaining: BANK_SLA_MINUTES - elapsed }
+    outcome = elapsed !== undefined && elapsed <= bankSlaMinutes
+      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is awaiting confirmation', recommendedAction: 'Monitor until the configured bank window expires.', slaMinutesRemaining: bankSlaMinutes - elapsed }
       : { status: 'delayed', stage: 'bank', rootCause: 'No bank credit found after the expected window', recommendedAction: 'Escalate with the settlement ID and UTR.' };
   } else if (bank.status === 'failed') {
     outcome = { status: 'failed', stage: 'bank', rootCause: 'Bank transfer failed', recommendedAction: 'Escalate the failed transfer using the bank reference and settlement UTR.' };
   } else if (bank.status === 'pending') {
     const elapsed = minutesBetween(settlement.processedAt, reference);
-    outcome = elapsed !== undefined && elapsed <= BANK_SLA_MINUTES
-      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is pending inside SLA', recommendedAction: 'Continue monitoring until the bank SLA expires.', slaMinutesRemaining: BANK_SLA_MINUTES - elapsed }
+    outcome = elapsed !== undefined && elapsed <= bankSlaMinutes
+      ? { status: 'pending', stage: 'bank', rootCause: 'Bank credit is pending inside SLA', recommendedAction: 'Continue monitoring until the bank SLA expires.', slaMinutesRemaining: bankSlaMinutes - elapsed }
       : { status: 'delayed', stage: 'bank', rootCause: 'Bank credit exceeded the expected window', recommendedAction: 'Escalate to the banking partner with the UTR.' };
   } else if (!bank.creditedAt || timestamp(bank.creditedAt) === undefined) {
     validationIssues.push(issue('missing_timestamp', 'Bank credit timestamp unavailable', 'The bank is marked credited without a valid creditedAt value.', 'bank'));
@@ -353,8 +357,8 @@ export function reconcileTransaction(
   } else if (related.ledger.length === 0) {
     validationIssues.push(issue('missing_ledger', 'Merchant ledger record unavailable', 'Bank credit has no linked merchant ledger entry.', 'ledger', 'medium'));
     const elapsed = minutesBetween(bank.creditedAt, reference);
-    outcome = elapsed !== undefined && elapsed <= LEDGER_SLA_MINUTES
-      ? { status: 'pending', stage: 'ledger', rootCause: 'Ledger posting is still inside its update window', recommendedAction: 'Wait for the ledger synchronization window to close.', slaMinutesRemaining: LEDGER_SLA_MINUTES - elapsed }
+    outcome = elapsed !== undefined && elapsed <= ledgerSlaMinutes
+      ? { status: 'pending', stage: 'ledger', rootCause: 'Ledger posting is still inside its update window', recommendedAction: 'Wait for the ledger synchronization window to close.', slaMinutesRemaining: ledgerSlaMinutes - elapsed }
       : { status: 'delayed', stage: 'ledger', rootCause: 'Bank credit has no matching merchant ledger entry', recommendedAction: 'Escalate to merchant ledger operations with the bank reference.' };
   } else if (related.ledger.length > 1) {
     outcome = { status: 'mismatch', stage: 'ledger', rootCause: `${related.ledger.length} ledger postings were found for one transaction.`, recommendedAction: 'Flag the duplicate entries and begin ledger reversal review.' };

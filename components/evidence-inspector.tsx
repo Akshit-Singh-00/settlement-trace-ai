@@ -23,15 +23,15 @@ function humanize(key: string) {
   return key.replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').toLowerCase();
 }
 
-function displayValue(key: string, value: string | number | undefined) {
+function displayValue(key: string, value: string | number | undefined, currency?: string, timeZone?: string) {
   if (value === undefined || value === '') return 'Unavailable';
   if (typeof value === 'number' && key.toLowerCase().includes('amount')) {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value / 100);
+    try { if (!currency) return `${value} minor units`; const format = new Intl.NumberFormat('en-IN', { style: 'currency', currency }); return format.format(value / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2)); } catch { return `${value} minor units`; }
   }
   if (typeof value === 'string' && (key.endsWith('At') || key.endsWith('_at'))) {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) {
-      return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(parsed);
+      return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(parsed);
     }
   }
   return String(value);
@@ -42,11 +42,13 @@ export function EvidenceInspector({
   validationIssues,
   selectedStage,
   onStageSelect,
+  timeZone,
 }: {
   evidence: EvidenceGroup[];
   validationIssues: ValidationIssue[];
   selectedStage: PipelineStage;
   onStageSelect: (stage: PipelineStage) => void;
+  timeZone?: string;
 }) {
   const activeSource = stageToSource[selectedStage];
   const groupId = useId();
@@ -106,7 +108,7 @@ export function EvidenceInspector({
                   return (
                     <div key={key} data-attention={attention || undefined}>
                       <dt>{humanize(key)}</dt>
-                      <dd>{displayValue(key, value)}</dd>
+                      <dd>{displayValue(key, value, typeof record.currency === 'string' ? record.currency : undefined, timeZone)}</dd>
                     </div>
                   );
                 })}

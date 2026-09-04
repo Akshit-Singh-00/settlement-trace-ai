@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { ThemeProvider } from '@/components/theme-provider';
 import { MotionProvider } from '@/components/motion-provider';
 import './globals.css';
+import './workspace.css';
 
 export const metadata: Metadata = {
   title: 'Settlement Trace AI | Evidence-grounded reconciliation',
