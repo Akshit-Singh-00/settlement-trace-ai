@@ -1,0 +1,2 @@
+transaction_id,merchant_id,merchant_name,amount,currency,status,gateway_reference,captured_at,expected_settlement_minutes
+TXN-5000,MRC-500,Example Sandbox Merchant,120000,INR,captured,GTW-5000,2026-09-04T10:00:00.000Z,120

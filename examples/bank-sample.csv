@@ -1,0 +1,2 @@
+bank_reference,settlement_id,transaction_id,amount,status,utr,credited_at
+BNK-500,SET-500,TXN-5000,120000,credited,UTR-5000,2026-09-04T12:00:00.000Z

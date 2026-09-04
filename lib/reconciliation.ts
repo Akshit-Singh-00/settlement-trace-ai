@@ -197,9 +197,30 @@ export function reconcileTransaction(
   }
 
   const bankElapsed = minutesBetween(settlement?.processedAt, reference);
+  const outcomeStageStatus = ({
+    successful: 'complete',
+    failed: 'failed',
+    mismatch: 'mismatch',
+    delayed: 'delayed',
+    pending: 'current',
+    uncertain: 'mismatch',
+  } satisfies Record<InvestigationStatus, StageStatus>)[outcome.status];
+  const settlementCreatedStatus: StageStatus = !settlement
+    ? outcome.stage === 'settlement' ? 'missing' : 'pending'
+    : outcome.stage === 'settlement' && (settlements.length > 1 || outcome.status === 'mismatch')
+      ? 'mismatch'
+      : 'complete';
+  const settlementProcessedStatus: StageStatus = !settlement
+    ? 'pending'
+    : settlement.status === 'failed'
+      ? 'failed'
+      : !settlement.processedAt
+        ? outcome.stage === 'settlement' ? outcomeStageStatus : 'pending'
+        : outcome.stage === 'settlement' ? outcomeStageStatus : 'complete';
   const timeline: TimelineStage[] = [
     makeStage('gateway', 'Payment captured', gateway.status === 'captured' ? 'complete' : 'failed', 'Payment gateway', `${gateway.status} · ${gateway.amount} paise`, gateway.gatewayReference, gateway.capturedAt, 0),
-    makeStage('settlement', 'Settlement batch created', !settlement ? (outcome.stage === 'settlement' ? 'missing' : 'pending') : outcome.stage === 'settlement' ? ({ successful: 'complete', failed: 'failed', mismatch: 'mismatch', delayed: 'delayed', pending: 'current', uncertain: 'mismatch' }[outcome.status] as StageStatus) : 'complete', 'Settlement system', settlement ? `${settlement.status} · ${settlement.amount} paise` : 'No matching batch', settlement?.settlementId, settlement?.createdAt, settlement ? minutesBetween(gateway.capturedAt, new Date(settlement.createdAt)) : undefined),
+    makeStage('settlement', 'Settlement batch created', settlementCreatedStatus, 'Settlement system', settlement ? `${settlement.status} · ${settlement.amount} paise` : 'No matching batch', settlement?.settlementId, settlement?.createdAt, settlement ? minutesBetween(gateway.capturedAt, new Date(settlement.createdAt)) : undefined),
+    makeStage('settlement', 'Settlement processed', settlementProcessedStatus, 'Settlement system', settlement?.processedAt ? `Processed · ${settlement.utr ?? 'UTR unavailable'}` : settlement ? 'Awaiting processor confirmation' : 'Blocked until a batch exists', settlement?.utr ?? settlement?.settlementId, settlement?.processedAt, settlement?.processedAt ? minutesBetween(settlement.createdAt, new Date(settlement.processedAt)) : undefined),
     makeStage('bank', 'Bank credit', !bank ? (outcome.stage === 'bank' ? (outcome.status === 'pending' ? 'current' : 'missing') : 'pending') : outcome.stage === 'bank' ? ({ successful: 'complete', failed: 'failed', mismatch: 'mismatch', delayed: 'delayed', pending: 'current', uncertain: 'mismatch' }[outcome.status] as StageStatus) : 'complete', 'Bank settlement system', bank ? `${bank.status} · ${bank.amount} paise` : 'No bank record', bank?.bankReference, bank?.creditedAt, bankElapsed),
     makeStage('ledger', 'Merchant ledger posting', ledgerRecords.length === 0 ? (outcome.stage === 'ledger' ? 'missing' : 'pending') : outcome.stage === 'ledger' ? (outcome.status === 'successful' ? 'complete' : outcome.status === 'mismatch' ? 'mismatch' : outcome.status === 'delayed' ? 'delayed' : 'current') : 'complete', 'Merchant ledger', ledgerRecords.length ? `${ledgerRecords.length} matching record${ledgerRecords.length > 1 ? 's' : ''}` : 'No ledger posting', ledgerRecords[0]?.ledgerReference, ledgerRecords[0]?.postedAt, minutesBetween(bank?.creditedAt, ledgerRecords[0]?.postedAt ? new Date(ledgerRecords[0].postedAt) : reference)),
   ];
