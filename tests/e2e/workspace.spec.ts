@@ -103,6 +103,43 @@ async function workspace(page: Page, role = 'investigator') {
   });
   return writes;
 }
+for (const width of [1440, 375]) {
+  for (const signedIn of [false, true]) {
+    test(`Team workspace opens in the same tab at ${width}px (${signedIn ? 'signed in' : 'signed out'})`, async ({ page, context }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      if (signedIn) {
+        await workspace(page, 'admin');
+      } else {
+        await page.route('**/api/workspace/session', (route) =>
+          route.fulfill({ json: { configured: true, authReady: true, member: null } }),
+        );
+      }
+      await page.goto('/');
+      await expect(page.locator('html')).toHaveAttribute('data-app-ready', 'true');
+      await expect(page.locator('.boot-overlay')).toHaveCount(0);
+      if (width < 901) {
+        await page.getByRole('button', { name: 'Open navigation menu' }).click();
+      }
+      const navigation = page.waitForRequest((request) =>
+        request.isNavigationRequest() && new URL(request.url()).pathname === '/workspace',
+      );
+      await page.getByRole('link', { name: 'Team workspace', exact: true }).filter({ visible: true }).click();
+      await navigation;
+      await expect(page).toHaveURL(signedIn ? /\/workspace$/ : /\/login$/);
+      if (signedIn) {
+        await expect(page.getByRole('heading', { name: 'Follow the money.' })).toBeVisible();
+        await page.getByRole('button', { name: 'Sources & imports', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Sources & imports.' })).toBeVisible();
+      } else {
+        await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeEnabled();
+      }
+      expect(context.pages()).toHaveLength(1);
+      expect(errors).toEqual([]);
+    });
+  }
+}
 test('workspace shows a clear setup state without a database connection', async ({
   page,
 }) => {
