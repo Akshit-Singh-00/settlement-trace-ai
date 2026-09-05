@@ -22,6 +22,8 @@ Configure the following **server** environment variables. None should use a `NEX
 
 For this deployment the designated Admin is `khush227799@gmail.com`. Other accounts require an Admin-created invitation matching their Google email. Inviting grants membership; it does not send an email. Only a verified Google identity may use the workspace. Password or unverified email sessions are rejected.
 
+Google sign-in is connected for the live Vercel workspace and the designated Admin has completed a real sign-in. The OAuth client is named **Settlement Trace AI — Vercel** in Google Cloud project `angular-pursuit-499402-n2`. Supabase uses the live site as its site URL and allows `https://settlement-trace-ai.vercel.app/auth/callback`. Public privacy and usage information is available at `/privacy` and `/terms`.
+
 Create a Google OAuth **Web application** client and enable Google in Supabase Authentication → Sign In / Providers. The Google authorized redirect URI is the project's `https://<project-ref>.supabase.co/auth/v1/callback`. Set Supabase's site URL to `APP_URL` and allow `APP_URL/auth/callback`. During Google OAuth testing, add the invited Google emails as test users. Publish the OAuth app when ready for broader sign-in. Local development may separately allow `http://localhost:4173/auth/callback`.
 
 The server performs the PKCE exchange, verifies identity with `getUser()`, then checks the active database membership on every request. Session cookies are HttpOnly, SameSite=Lax and Secure in production. Authenticated responses are private/no-store. Mutations require the exact configured Origin. Database-backed write and expensive-operation limits fail closed if they cannot be checked.

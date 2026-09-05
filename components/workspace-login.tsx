@@ -106,6 +106,10 @@ export function WorkspaceLogin() {
             Access is limited to invited members. Contact your Admin if you need
             an invitation.
           </small>
+          <nav className="ws-policy-links" aria-label="Site information">
+            <Link href="/privacy">Privacy policy</Link>
+            <Link href="/terms">Terms of use</Link>
+          </nav>
           <Link href="/">
             Explore the public demo <ArrowRight size={14} />
           </Link>

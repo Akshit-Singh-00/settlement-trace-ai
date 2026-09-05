@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, stagger, useMotionValue, useReducedMotion, useSpring } from 'framer-motion';
@@ -584,7 +585,7 @@ export function InvestigationShell({ referenceTime }: { referenceTime: string })
           {view === 'reports' && <section className="workspace-shell view-workspace report-view"><div className="section-heading"><div><span className="section-kicker">Investigation report</span><h2 tabIndex={-1}>{result.transactionId}</h2></div><div className="report-actions"><button type="button" onClick={() => window.print()}><Printer size={15} /> Print report</button><a href={reportHref} download={`${result.transactionId}-settlement-trace.json`}><Download size={15} /> Download report</a></div></div><article className="result-card"><span className={`status-pill status-${result.status}`}>{statusCopy[result.status]}</span><h3>{result.rootCause}</h3><p>{explanation.explanation.whatHappened}</p><p>{result.confidence}% confidence · {explanation.source === 'ai' ? 'AI-assisted explanation' : 'Deterministic explanation'}</p><div className="action-box"><span>Recommended support action</span><p>{explanation.explanation.recommendedAction}</p></div></article><TransactionTimeline timeline={result.timeline} selectedStage={selectedStage} onStageSelect={setSelectedStage} /><EvidenceInspector evidence={result.evidence} validationIssues={result.validationIssues} selectedStage={selectedStage} onStageSelect={setSelectedStage} /></section>}
         </ViewFrame>
       </AnimatePresence>}
-      {!booting && <footer><span className="brand"><span className="brand-mark"><Sparkles size={15} /></span>Settlement Trace <b>AI</b></span><p>Built for transparent fintech support investigations. All names, amounts, and records are simulated.</p><a href="#top" onClick={(event) => { event.preventDefault(); navigate('top'); }}>Back to home ↑</a></footer>}
+      {!booting && <footer><span className="brand"><span className="brand-mark"><Sparkles size={15} /></span>Settlement Trace <b>AI</b></span><p>Built for transparent fintech support investigations. All names, amounts, and records are simulated.</p><nav className="ws-policy-links" aria-label="Site information"><Link href="/privacy">Privacy policy</Link><Link href="/terms">Terms of use</Link></nav><a href="#top" onClick={(event) => { event.preventDefault(); navigate('top'); }}>Back to home ↑</a></footer>}
     </div>
   </main>;
 }

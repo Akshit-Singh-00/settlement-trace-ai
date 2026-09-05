@@ -537,6 +537,10 @@ export function WorkspaceShell({
         </main>
         <footer className="ws-footer">
           <span>Settlement Trace AI · Evidence before conclusions</span>
+          <nav className="ws-policy-links" aria-label="Site information">
+            <Link href="/privacy">Privacy policy</Link>
+            <Link href="/terms">Terms of use</Link>
+          </nav>
           <span>Times shown in {member.timezone}</span>
         </footer>
       </div>
