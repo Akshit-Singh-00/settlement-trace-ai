@@ -8,17 +8,17 @@ Apply `supabase/migrations/202609050001_workspace.sql` once to a fresh Supabase 
 
 Configure the following **server** environment variables. None should use a `NEXT_PUBLIC_` prefix.
 
-| Variable | Purpose |
-| --- | --- |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_PUBLISHABLE_KEY` | Publishable key used for Auth |
-| `SUPABASE_SERVICE_ROLE_KEY` | Secret API key (or legacy service-role key), stored only on the server |
-| `APP_URL` | Exact canonical origin; production is `https://settlement-trace-ai.vercel.app` |
-| `WORKSPACE_ADMIN_EMAIL` | Verified Google email permitted to bootstrap the first Admin |
-| `GEMINI_API_KEY`, `GEMINI_MODEL` | Optional evidence-grounded explanations and document extraction |
-| `STRIPE_SECRET_KEY` | Optional Stripe **sandbox** key beginning `sk_test_` |
-| `CRON_SECRET` | Random secret authorizing the Vercel daily job |
-| `ALERT_WEBHOOK_URL` | Optional operator-managed HTTPS webhook endpoint |
+| Variable                         | Purpose                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `SUPABASE_URL`                   | Supabase project URL                                                           |
+| `SUPABASE_PUBLISHABLE_KEY`       | Publishable key used for Auth                                                  |
+| `SUPABASE_SERVICE_ROLE_KEY`      | Secret API key (or legacy service-role key), stored only on the server         |
+| `APP_URL`                        | Exact canonical origin; production is `https://settlement-trace-ai.vercel.app` |
+| `WORKSPACE_ADMIN_EMAIL`          | Verified Google email permitted to bootstrap the first Admin                   |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Optional evidence-grounded explanations and document extraction                |
+| `STRIPE_SECRET_KEY`              | Optional Stripe **sandbox** key beginning `sk_test_`                           |
+| `CRON_SECRET`                    | Random secret authorizing the Vercel daily job                                 |
+| `ALERT_WEBHOOK_URL`              | Optional operator-managed HTTPS webhook endpoint                               |
 
 For this deployment the designated Admin is `khush227799@gmail.com`. Other accounts require an Admin-created invitation matching their Google email. Inviting grants membership; it does not send an email. Only a verified Google identity may use the workspace. Password or unverified email sessions are rejected.
 
@@ -28,11 +28,11 @@ The server performs the PKCE exchange, verifies identity with `getUser()`, then 
 
 ## Roles and workflow
 
-| Role | Allowed actions |
-| --- | --- |
-| Viewer | Read dashboard, results, evidence, case status and notes; edit own profile |
+| Role         | Allowed actions                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Viewer       | Read dashboard, results, evidence, case status and notes; edit own profile                                                      |
 | Investigator | Viewer actions plus trace, CSV import, Stripe sync, PDF/image extraction, scan, report export, case assignment/status and notes |
-| Admin | Investigator actions plus invitations, role/access changes, SLAs and audit access |
+| Admin        | Investigator actions plus invitations, role/access changes, SLAs and audit access                                               |
 
 The server checks every permission; hiding a control is only a UI convenience. Profile updates reject unknown fields, including role, email and identity. The member-update function prevents self-lockout and removal of the last Admin. Deactivated members lose API access on their next request.
 
@@ -54,7 +54,9 @@ Document extraction accepts PDF, PNG, JPEG or WebP up to 2 MB. Gemini returns ex
 
 `/api/jobs/daily` runs once daily at `02:00 UTC` on Vercel's free plan. It requires `Authorization: Bearer <CRON_SECRET>`. If Stripe sandbox is configured, it syncs captures before scanning; a Stripe failure is audited and does not prevent the scan. A summary is saved for Overview. This is a daily schedule, not real-time event processing.
 
-Enable alerts in Administration after configuring a webhook. Delayed stages beyond the configured threshold are queued, deduplicated by transaction/stage/cause, and sent in batches of ten. Delivery uses a two-minute claim and at most five attempts; successful deliveries are marked once. Failed delivery can be retried by a later daily job. Disabling alerts stops delivery. Webhook payloads contain transaction ID, stage and root cause; configure a destination authorized to receive that workspace data. Native Slack setup and continuous workers are not included; a compatible webhook can forward notifications.
+Exceptions and their counts are always available inside the workspace. This deployment currently uses the website for exception review; an external notification destination is optional.
+
+To add external notifications, configure a webhook and enable daily SLA alerts in Administration. Delayed stages beyond the configured threshold are queued, deduplicated by transaction/stage/cause, and sent in batches of ten. Delivery uses a two-minute claim and at most five attempts; successful deliveries are marked once. Failed delivery can be retried by a later daily job. Disabling alerts stops delivery. Webhook payloads contain transaction ID, stage and root cause; configure a destination authorized to receive that workspace data. Native Slack setup and continuous workers are not included; a compatible webhook can forward notifications.
 
 ## Verification
 

@@ -92,8 +92,27 @@ export async function extractDocument(
         ],
         generationConfig: {
           responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: {
+              transactionId: { type: 'STRING', nullable: true },
+              settlementId: { type: 'STRING', nullable: true },
+              bankReference: { type: 'STRING', nullable: true },
+              utr: { type: 'STRING', nullable: true },
+              amountMinor: { type: 'INTEGER', nullable: true },
+              currency: { type: 'STRING', nullable: true },
+              creditedAt: { type: 'STRING', nullable: true },
+              bankStatus: {
+                type: 'STRING',
+                enum: ['credited', 'pending', 'failed'],
+                nullable: true,
+              },
+              uncertainty: { type: 'STRING' },
+            },
+            required: Object.keys(extractedEvidenceSchema.shape),
+          },
           temperature: 0,
-          maxOutputTokens: 700,
+          maxOutputTokens: 2048,
         },
       }),
     },
@@ -104,18 +123,35 @@ export async function extractDocument(
       'The document could not be read. Retry or enter the evidence manually.',
     );
   const payload = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    candidates?: Array<{
+      finishReason?: string;
+      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+    }>;
   };
   try {
+    const candidate = payload.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== 'STOP')
+      throw new Error('Incomplete extraction');
     const evidence = extractedEvidenceSchema.parse(
       JSON.parse(
-        payload.candidates?.[0]?.content?.parts
+        candidate?.content?.parts
+          ?.filter((p) => !p.thought)
           ?.map((p) => p.text ?? '')
           .join('') ?? '',
       ),
     );
     return { evidence, requiresReview: true };
-  } catch {
+  } catch (error) {
+    // Diagnostic categories only: never log document contents or credentials.
+    console.warn('Document extraction validation failed', {
+      finishReason: payload.candidates?.[0]?.finishReason ?? 'missing',
+      reason:
+        error instanceof z.ZodError
+          ? 'field-validation'
+          : error instanceof SyntaxError
+            ? 'invalid-json'
+            : 'incomplete-response',
+    });
     throw new WorkspaceError(
       422,
       'The document did not produce reliable structured fields. Enter the evidence manually.',

@@ -303,11 +303,12 @@ export function WorkspaceAdmin({
                   setSettings({ ...settings, alerts_enabled: e.target.checked })
                 }
               />
-              Enable daily SLA alerts
+              Send daily SLA alerts to an external webhook
             </label>
             <small>
-              Alerts require a configured webhook. Duplicate alerts for the same
-              transaction and cause are suppressed.
+              Exceptions are always available inside the workspace. Enable this
+              only to send alerts to a configured webhook. Duplicate alerts for
+              the same transaction and cause are suppressed.
             </small>
             <Button disabled={busy} type="submit">
               Save SLA settings
@@ -328,7 +329,9 @@ export function WorkspaceAdmin({
               >
                 {data.connections[key as keyof AdminData['connections']]
                   ? 'Configured'
-                  : 'Needs setup'}
+                  : key === 'alerts'
+                    ? 'Optional'
+                    : 'Needs setup'}
               </span>
             </div>
           ))}

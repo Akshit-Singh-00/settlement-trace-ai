@@ -222,7 +222,7 @@ describe('document evidence review', () => {
   };
   it('returns missing fields for review without inventing a timestamp', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json({
         candidates: [
           { content: { parts: [{ text: JSON.stringify(evidence) }] } },
@@ -232,6 +232,56 @@ describe('document evidence review', () => {
     const result = await extractDocument(
       { mimeType: 'application/pdf', data: btoa('%PDF-1.4 test') },
       fetcher,
+    );
+    expect(result).toEqual({ evidence, requiresReview: true });
+    const request = JSON.parse(fetcher.mock.calls[0][1]!.body as string);
+    expect(request.generationConfig.responseSchema).toMatchObject({
+      type: 'OBJECT',
+      properties: {
+        amountMinor: { type: 'INTEGER', nullable: true },
+        creditedAt: { type: 'STRING', nullable: true },
+      },
+      required: Object.keys(evidence),
+    });
+  });
+  it('rejects truncated responses even when the partial JSON is valid', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    await expect(
+      extractDocument(
+        { mimeType: 'application/pdf', data: btoa('%PDF-1.4 test') },
+        async () =>
+          Response.json({
+            candidates: [
+              {
+                finishReason: 'MAX_TOKENS',
+                content: { parts: [{ text: JSON.stringify(evidence) }] },
+              },
+            ],
+          }),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+  it('validates the final answer without treating thought text as evidence', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const result = await extractDocument(
+      { mimeType: 'application/pdf', data: btoa('%PDF-1.4 test') },
+      async () =>
+        Response.json({
+          candidates: [
+            {
+              finishReason: 'STOP',
+              content: {
+                parts: [
+                  {
+                    thought: true,
+                    text: 'Intermediate reasoning, not extracted fields.',
+                  },
+                  { text: JSON.stringify(evidence) },
+                ],
+              },
+            },
+          ],
+        }),
     );
     expect(result).toEqual({ evidence, requiresReview: true });
   });
